@@ -1,0 +1,13 @@
+.DS_Store
+.cache/
+.gocache/
+
+quest-room
+
+server/.env
+web/.env.local
+
+web/node_modules/
+web/dist/
+
+*.log

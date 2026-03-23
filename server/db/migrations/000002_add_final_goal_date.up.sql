@@ -1,0 +1,5 @@
+ALTER TABLE rooms
+ADD COLUMN final_goal_date DATE NOT NULL DEFAULT ((CURRENT_DATE + INTERVAL '30 days')::date);
+
+ALTER TABLE rooms
+ALTER COLUMN final_goal_date DROP DEFAULT;

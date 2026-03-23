@@ -1,0 +1,601 @@
+import { useEffect, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
+import { Check } from "lucide-react";
+import GlobalTopBar from "../components/GlobalTopBar";
+import LocalSegmentTabs from "../components/LocalSegmentTabs";
+import RoomHeader from "../components/RoomHeader";
+import MemberStatusStrip from "../components/MemberStatusStrip";
+import { useAuth } from "../context/AuthContext";
+import { useDashboard } from "../hooks/useDashboard";
+import { useCompletion } from "../hooks/useCompletion";
+import { useHorizontalSwipe } from "../hooks/useHorizontalSwipe";
+import { createRecurringQuest, kickRoomMember, updateRoom } from "../lib/api";
+import { monthlyRoomStatusQueryOptions } from "../lib/queryOptions";
+
+function memberStatusLabel(status) {
+  if (status === "perfect") return "오늘 목표 완벽 달성";
+  if (status === "goal_met") return "오늘 목표 달성";
+  return "오늘 목표 미달성";
+}
+
+function requiredQuestCount(totalQuestCount, cutoffPercent) {
+  if (totalQuestCount <= 0) return 0;
+  return Math.max(1, Math.round((totalQuestCount * cutoffPercent) / 100));
+}
+
+function dailyGoalStatus(completedQuestCount, totalQuestCount, cutoffPercent) {
+  if (totalQuestCount <= 0) return "under_target";
+  if (completedQuestCount >= totalQuestCount) return "perfect";
+  if (completedQuestCount >= requiredQuestCount(totalQuestCount, cutoffPercent))
+    return "goal_met";
+  return "under_target";
+}
+
+export default function Dashboard({ roomId, onNavigate }) {
+  const queryClient = useQueryClient();
+  const { getRoomAccess, markRoomVisited } = useAuth();
+  const roomAccess = getRoomAccess(roomId);
+  const { data, loading, error, refetch } = useDashboard(roomId);
+  const [shareState, setShareState] = useState("idle");
+  const [showCreateQuest, setShowCreateQuest] = useState(false);
+  const [questTitle, setQuestTitle] = useState("");
+  const [questDescription, setQuestDescription] = useState("");
+  const [createLoading, setCreateLoading] = useState(false);
+  const [createError, setCreateError] = useState(null);
+  const [selectedMemberId, setSelectedMemberId] = useState(null);
+  const [showGoalSettings, setShowGoalSettings] = useState(false);
+  const [cutoffDraft, setCutoffDraft] = useState(50);
+  const [cutoffSaving, setCutoffSaving] = useState(false);
+  const [cutoffError, setCutoffError] = useState(null);
+  const [kickLoading, setKickLoading] = useState(false);
+  const [kickError, setKickError] = useState(null);
+  const swipeHandlers = useHorizontalSwipe({
+    onSwipeLeft: () => onNavigate("history", { roomId }),
+  });
+
+  const todayDate = data?.todayDate ?? new Date().toISOString().slice(0, 10);
+  const { completedIds, toggle } = useCompletion(
+    roomId,
+    todayDate,
+    data?.todayCompletions ?? [],
+    roomAccess?.memberId,
+  );
+
+  useEffect(() => {
+    if (roomId && roomAccess) {
+      markRoomVisited(roomId);
+    }
+  }, [roomId, roomAccess, markRoomVisited]);
+
+  useEffect(() => {
+    if (!roomId || !data?.todayDate) return;
+
+    const currentDate = new Date(data.todayDate);
+    const year = currentDate.getFullYear();
+    const month = currentDate.getMonth() + 1;
+
+    queryClient.prefetchQuery(
+      monthlyRoomStatusQueryOptions(roomId, year, month, data.todayDate),
+    );
+  }, [queryClient, roomId, data?.todayDate]);
+
+  useEffect(() => {
+    if (data?.room?.dailyGoalCutoffPercent) {
+      setCutoffDraft(data.room.dailyGoalCutoffPercent);
+    }
+  }, [data?.room?.dailyGoalCutoffPercent]);
+
+  useEffect(() => {
+    setKickError(null);
+  }, [selectedMemberId]);
+
+  if (!roomAccess) {
+    return (
+      <div className="center-msg">
+        <div className="center-msg-text">이 방에 접근할 수 없어요</div>
+        <div className="center-msg-sub">
+          메인에서 접근 가능한 방을 다시 선택해 주세요.
+        </div>
+        <button
+          className="btn-primary"
+          style={{ marginTop: 16 }}
+          onClick={() => onNavigate("home")}
+        >
+          메인으로 이동
+        </button>
+      </div>
+    );
+  }
+
+  if (loading)
+    return (
+      <div className="center-msg">
+        <div className="spinner" />
+      </div>
+    );
+
+  if (error) {
+    return (
+      <div className="center-msg">
+        <div className="center-msg-text error">불러오기 실패</div>
+        <div className="center-msg-sub">{error.message}</div>
+      </div>
+    );
+  }
+
+  const { room, recurringQuests, members, currentMember } = data;
+  const isLeader = room.leaderMemberId === currentMember.id;
+  const activeQuests = recurringQuests.filter((quest) => quest.isActive);
+  const cutoffPercent = room.dailyGoalCutoffPercent ?? 50;
+  const baseTodayCompletions = data.todayCompletions ?? [];
+  const optimisticTodayCompletions = [
+    ...baseTodayCompletions.filter(
+      (completion) => completion.memberId !== currentMember.id,
+    ),
+    ...Array.from(completedIds).map((questId) => ({
+      memberId: currentMember.id,
+      questId,
+      date: todayDate,
+    })),
+  ];
+  const optimisticCurrentMemberStatus = {
+    memberId: currentMember.id,
+    date: todayDate,
+    status: dailyGoalStatus(
+      completedIds.size,
+      activeQuests.length,
+      cutoffPercent,
+    ),
+    completedQuestCount: completedIds.size,
+    requiredQuestCount: requiredQuestCount(activeQuests.length, cutoffPercent),
+    totalActiveQuestCount: activeQuests.length,
+  };
+  const optimisticTodayMemberStatuses = [
+    ...(data.todayMemberStatuses ?? []).filter(
+      (status) => status.memberId !== currentMember.id,
+    ),
+    optimisticCurrentMemberStatus,
+  ];
+  const selectedMember =
+    members.find((member) => member.id === selectedMemberId) ?? null;
+  const selectedMemberStatus =
+    optimisticTodayMemberStatuses.find(
+      (status) => status.memberId === selectedMemberId,
+    ) ?? null;
+  const totalMembers = members.length;
+  const requiredCount = optimisticCurrentMemberStatus.requiredQuestCount;
+  const remainingForGoal = Math.max(0, requiredCount - completedIds.size);
+
+  function membersCompletedCount(questId) {
+    return optimisticTodayCompletions.filter(
+      (completion) => completion.questId === questId,
+    ).length;
+  }
+
+  async function copyInviteUrl(inviteUrl) {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(inviteUrl);
+      return;
+    }
+
+    const textarea = document.createElement("textarea");
+    textarea.value = inviteUrl;
+    textarea.setAttribute("readonly", "");
+    textarea.style.position = "absolute";
+    textarea.style.left = "-9999px";
+    document.body.appendChild(textarea);
+    textarea.select();
+    document.execCommand("copy");
+    document.body.removeChild(textarea);
+  }
+
+  async function handleShareInvite() {
+    const inviteToken = room?.inviteToken;
+    if (!inviteToken) return;
+
+    const inviteUrl = new URL(
+      `/join/${inviteToken}`,
+      window.location.origin,
+    ).toString();
+    const sharePayload = {
+      title: `${room.name} 함께하기`,
+      text: `${room.name} 방에 같이 참여해 보세요.`,
+      url: inviteUrl,
+    };
+
+    try {
+      if (navigator.share) {
+        await navigator.share(sharePayload);
+        setShareState("shared");
+      } else {
+        await copyInviteUrl(inviteUrl);
+        setShareState("copied");
+      }
+    } catch (e) {
+      if (e?.name === "AbortError") return;
+
+      try {
+        await copyInviteUrl(inviteUrl);
+        setShareState("copied");
+      } catch {}
+    }
+
+    window.setTimeout(() => setShareState("idle"), 2000);
+  }
+
+  async function handleCopyInvite() {
+    const inviteToken = room?.inviteToken;
+    if (!inviteToken) return;
+
+    const inviteUrl = new URL(
+      `/join/${inviteToken}`,
+      window.location.origin,
+    ).toString();
+
+    try {
+      await copyInviteUrl(inviteUrl);
+      setShareState("copied");
+    } catch {}
+
+    window.setTimeout(() => setShareState("idle"), 2000);
+  }
+
+  async function handleCreateQuest() {
+    if (!roomId || !questTitle.trim() || !questDescription.trim()) return;
+
+    try {
+      setCreateLoading(true);
+      setCreateError(null);
+      await createRecurringQuest(roomId, {
+        title: questTitle.trim(),
+        description: questDescription.trim(),
+      });
+      setQuestTitle("");
+      setQuestDescription("");
+      setShowCreateQuest(false);
+      await refetch();
+    } catch (e) {
+      setCreateError(e);
+    } finally {
+      setCreateLoading(false);
+    }
+  }
+
+  async function handleKickMember() {
+    if (
+      !selectedMember ||
+      !isLeader ||
+      selectedMember.id === currentMember.id
+    ) {
+      return;
+    }
+
+    const confirmed = window.confirm(
+      `${selectedMember.nickname} 님을 방에서 강퇴할까요?`,
+    );
+    if (!confirmed) {
+      return;
+    }
+
+    try {
+      setKickLoading(true);
+      setKickError(null);
+      await kickRoomMember(roomId, selectedMember.id);
+      setSelectedMemberId(null);
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["roomDashboard", roomId] }),
+        queryClient.invalidateQueries({
+          queryKey: ["dailyRoomStatus", roomId],
+        }),
+        queryClient.invalidateQueries({
+          queryKey: ["monthlyRoomStatus", roomId],
+        }),
+        queryClient.invalidateQueries({
+          queryKey: ["monthlyCompletions", roomId],
+        }),
+      ]);
+      await refetch();
+    } catch (e) {
+      setKickError(e);
+    } finally {
+      setKickLoading(false);
+    }
+  }
+
+  async function handleSaveCutoff() {
+    const nextValue = Number(cutoffDraft);
+    if (!Number.isFinite(nextValue) || nextValue < 1 || nextValue > 100) {
+      setCutoffError(new Error("커트라인은 1부터 100 사이여야 해요."));
+      return;
+    }
+
+    try {
+      setCutoffSaving(true);
+      setCutoffError(null);
+      await updateRoom(roomId, { dailyGoalCutoffPercent: nextValue });
+      await queryClient.invalidateQueries({
+        queryKey: ["roomDashboard", roomId],
+      });
+      await queryClient.invalidateQueries({
+        queryKey: ["monthlyRoomStatus", roomId],
+      });
+      await refetch();
+      setShowGoalSettings(false);
+    } catch (e) {
+      setCutoffError(e);
+    } finally {
+      setCutoffSaving(false);
+    }
+  }
+
+  const selectedMemberCompletionIds = new Set(
+    optimisticTodayCompletions
+      .filter((completion) => completion.memberId === selectedMemberId)
+      .map((completion) => completion.questId),
+  );
+
+  return (
+    <div className="page-shell" {...swipeHandlers}>
+      <GlobalTopBar
+        onHome={() => onNavigate("home")}
+        onAccess={() => onNavigate("access", { roomId })}
+      />
+      <LocalSegmentTabs
+        active="quest"
+        onChange={(id) => {
+          if (id === "history") onNavigate("history", { roomId });
+        }}
+      />
+      <div className="scroll-area room-content-scroll">
+        <RoomHeader
+          room={room}
+          todayDate={todayDate}
+          onCopyLink={handleCopyInvite}
+          shareState={shareState}
+        />
+
+        <div className="goal-progress-card">
+          <div className="goal-progress-label">오늘의 목표 </div>
+          {activeQuests.length === 0 ? (
+            <div className="goal-progress-value">
+              아직 설정된 반복 미션이 없어요
+            </div>
+          ) : optimisticCurrentMemberStatus.status === "perfect" ? (
+            <div className="goal-progress-value">목표를 모두 완료했어요!</div>
+          ) : optimisticCurrentMemberStatus.status === "goal_met" ? (
+            <div className="goal-progress-value">일일 목표를 달성했어요</div>
+          ) : (
+            <div className="goal-progress-value">
+              목표 완료까지 {remainingForGoal}개 남았어요
+            </div>
+          )}
+          <div className="goal-progress-sub">
+            {activeQuests.length}개 중 {requiredCount}개 완료하면 목표 달성
+          </div>
+        </div>
+
+        {isLeader && (
+          <div className="goal-progress-inline-setting">
+            <span className="leader-cutoff-label">일일 목표 커트라인:</span>
+            <span className="leader-cutoff-inline-value">
+              {room.dailyGoalCutoffPercent}%
+            </span>
+            <button
+              className="leader-cutoff-inline-btn"
+              type="button"
+              onClick={() => {
+                setShowGoalSettings((prev) => !prev);
+                setCutoffError(null);
+              }}
+            >
+              {showGoalSettings ? "닫기" : "수정"}
+            </button>
+          </div>
+        )}
+
+        {isLeader && showGoalSettings && (
+          <div className="leader-action-card">
+            <div className="leader-form leader-form-inline">
+              <div className="input-group">
+                <div className="input-lbl">goal_met 기준 퍼센트</div>
+                <input
+                  className="text-input"
+                  type="number"
+                  min="1"
+                  max="100"
+                  value={cutoffDraft}
+                  onChange={(e) => setCutoffDraft(e.target.value)}
+                />
+              </div>
+
+              {cutoffError && (
+                <div className="error-msg">{cutoffError.message}</div>
+              )}
+
+              <button
+                className="btn-primary"
+                type="button"
+                disabled={cutoffSaving}
+                onClick={handleSaveCutoff}
+              >
+                {cutoffSaving ? "저장 중..." : "커트라인 저장"}
+              </button>
+            </div>
+          </div>
+        )}
+
+        <div className="section-label">오늘의 미션</div>
+
+        {isLeader && (
+          <div className="leader-action-card">
+            <button
+              className="leader-action-btn"
+              type="button"
+              onClick={() => {
+                setShowCreateQuest((prev) => !prev);
+                setCreateError(null);
+              }}
+            >
+              {showCreateQuest ? "반복 미션 입력 닫기" : "반복 미션 만들기"}
+            </button>
+
+            {showCreateQuest && (
+              <div className="leader-form">
+                <div className="input-group">
+                  <div className="input-lbl">미션 제목</div>
+                  <input
+                    className="text-input"
+                    type="text"
+                    maxLength={80}
+                    placeholder="예: 물 2리터 마시기"
+                    value={questTitle}
+                    onChange={(e) => setQuestTitle(e.target.value)}
+                  />
+                </div>
+
+                <div className="input-group">
+                  <div className="input-lbl">미션 설명</div>
+                  <textarea
+                    className="text-input text-area text-area-sm"
+                    rows={3}
+                    maxLength={160}
+                    placeholder="예: 하루 동안 물 2리터 이상 마시고 체크하기"
+                    value={questDescription}
+                    onChange={(e) => setQuestDescription(e.target.value)}
+                  />
+                </div>
+
+                {createError && (
+                  <div className="error-msg">{createError.message}</div>
+                )}
+
+                <button
+                  className="btn-primary"
+                  type="button"
+                  disabled={
+                    createLoading ||
+                    !questTitle.trim() ||
+                    !questDescription.trim()
+                  }
+                  onClick={handleCreateQuest}
+                >
+                  {createLoading ? "추가하는 중..." : "반복 미션 추가하기"}
+                </button>
+              </div>
+            )}
+          </div>
+        )}
+
+        {activeQuests.map((quest) => {
+          const checked = completedIds.has(quest.id);
+          const doneCount = membersCompletedCount(quest.id);
+
+          return (
+            <div
+              key={quest.id}
+              className={`quest-card ${checked ? "checked" : ""}`}
+              onClick={() => toggle(quest.id)}
+            >
+              <div className="quest-checkbox">
+                <Check className="check-svg" size={13} strokeWidth={2.4} />
+              </div>
+              <div style={{ flex: 1 }}>
+                <div className="quest-name">{quest.title}</div>
+                <div className="quest-sub">
+                  {checked
+                    ? "오늘 완료했어요"
+                    : quest.description || "아직 완료하지 않았어요"}
+                </div>
+              </div>
+              <div className="quest-count">
+                {doneCount}/{totalMembers}
+              </div>
+            </div>
+          );
+        })}
+
+        <div className="member-strip-header">
+          <div className="section-label">오늘 멤버 현황</div>
+          <div className="member-strip-total">총 {totalMembers}명</div>
+        </div>
+
+        <MemberStatusStrip
+          members={members}
+          currentMemberId={currentMember.id}
+          activeQuestCount={activeQuests.length}
+          todayCompletions={optimisticTodayCompletions}
+          memberStatuses={optimisticTodayMemberStatuses}
+          selectedMemberId={selectedMemberId}
+          onSelectMember={(member) => {
+            if (member.id === currentMember.id) {
+              setSelectedMemberId(null);
+              return;
+            }
+            setSelectedMemberId((prev) =>
+              prev === member.id ? null : member.id,
+            );
+          }}
+        />
+
+        {selectedMember && selectedMember.id !== currentMember.id && (
+          <div className="member-detail-card">
+            <div className="member-detail-title">
+              {selectedMember.nickname}의 오늘 미션
+            </div>
+            <div className="member-detail-sub">
+              {selectedMemberStatus
+                ? `${memberStatusLabel(selectedMemberStatus.status)} · ${selectedMemberStatus.completedQuestCount}/${selectedMemberStatus.totalActiveQuestCount}`
+                : `완료 ${selectedMemberCompletionIds.size}/${activeQuests.length}`}
+            </div>
+
+            <div className="member-detail-list">
+              {activeQuests.map((quest) => {
+                const done = selectedMemberCompletionIds.has(quest.id);
+                return (
+                  <div
+                    key={quest.id}
+                    className={`member-detail-item ${done ? "done" : ""}`}
+                  >
+                    <div className="member-detail-item-main">
+                      <div className="member-detail-item-title">
+                        {quest.title}
+                      </div>
+                      <div className="member-detail-item-desc">
+                        {done ? "완료했어요" : "아직 완료하지 않았어요"}
+                      </div>
+                    </div>
+                    <div
+                      className={`member-detail-badge ${done ? "done" : ""}`}
+                    >
+                      {done ? "완료" : "미완료"}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            {isLeader && selectedMember.role !== "leader" && (
+              <div className="member-detail-actions">
+                {kickError && (
+                  <div className="error-msg member-detail-error">
+                    {kickError.message}
+                  </div>
+                )}
+                <button
+                  className="member-kick-btn"
+                  type="button"
+                  disabled={kickLoading}
+                  onClick={handleKickMember}
+                >
+                  {kickLoading ? "강퇴하는 중..." : "이 멤버 강퇴하기"}
+                </button>
+              </div>
+            )}
+          </div>
+        )}
+
+        <div style={{ height: 4 }} />
+      </div>
+    </div>
+  );
+}

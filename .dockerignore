@@ -1,0 +1,14 @@
+.git
+.gitignore
+.DS_Store
+.cache
+.gocache
+node_modules
+web/node_modules
+web/dist
+web/react.log
+server/tmp
+server/.gocache
+server/golang.log
+quest-room
+web-sample

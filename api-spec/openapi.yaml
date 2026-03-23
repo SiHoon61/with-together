@@ -1,0 +1,1309 @@
+openapi: 3.0.3
+info:
+  title: Quest Room API
+  version: 0.1.0
+  description: |
+    회원가입 없이 사용하는 공동 목표/반복 퀘스트 서비스의 MVP API 스펙.
+    각 방은 최종 목표와 최종 목표 날짜를 가지며, 멤버들은 해당 날짜까지 함께 달린다.
+
+    이 파일을 단일 진실의 원천(Single Source of Truth)으로 사용한다.
+servers:
+  - url: http://localhost:8080
+    description: Local server
+tags:
+  - name: Health
+  - name: Rooms
+  - name: Invites
+  - name: Members
+  - name: RecurringQuests
+  - name: Completions
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: SessionToken
+  schemas:
+    Error:
+      type: object
+      required:
+        - code
+        - message
+      properties:
+        code:
+          type: string
+          example: nickname_taken
+        message:
+          type: string
+          example: That nickname is already used in this room.
+    ErrorResponse:
+      type: object
+      required:
+        - error
+      properties:
+        error:
+          $ref: '#/components/schemas/Error'
+    Room:
+      type: object
+      required:
+        - id
+        - name
+        - finalGoal
+        - finalGoalDate
+        - dailyGoalCutoffPercent
+        - timezone
+        - inviteToken
+        - leaderMemberId
+        - memberCount
+        - createdAt
+        - updatedAt
+      properties:
+        id:
+          type: string
+          example: room_01HQ6A7J4X2JTKD5Z6Y9M8Q2F4
+        name:
+          type: string
+          example: 100일 운동방
+        finalGoal:
+          type: string
+          example: 100일 동안 매일 운동 인증하기
+        finalGoalDate:
+          type: string
+          format: date
+          description: Final target date that the room is working toward.
+          example: '2026-06-30'
+        dailyGoalCutoffPercent:
+          type: integer
+          minimum: 1
+          maximum: 100
+          description: |
+            Percentage cutoff for considering a member's daily goal as met.
+            Default is 50.
+
+            Required completed quest count is calculated by rounding
+            (active recurring quest count × dailyGoalCutoffPercent / 100).
+
+            Example: if there are 3 active recurring quests and the cutoff is 50,
+            then 3 × 0.5 = 1.5 and the member must complete at least 2 quests.
+          example: 50
+        timezone:
+          type: string
+          description: IANA timezone identifier used to calculate each room's daily boundary.
+          example: Asia/Seoul
+        inviteToken:
+          type: string
+          example: ivt_0sUQGqPH9k6f0QGmYk8y
+        leaderMemberId:
+          type: string
+          example: mem_01HQ6A9G9D22N17H2N3QH7S1BG
+        memberCount:
+          type: integer
+          minimum: 1
+          example: 4
+        createdAt:
+          type: string
+          format: date-time
+          example: '2026-03-20T08:30:00Z'
+        updatedAt:
+          type: string
+          format: date-time
+          example: '2026-03-20T08:30:00Z'
+    Member:
+      type: object
+      required:
+        - id
+        - roomId
+        - nickname
+        - role
+        - joinedAt
+      properties:
+        id:
+          type: string
+          example: mem_01HQ6A9G9D22N17H2N3QH7S1BG
+        roomId:
+          type: string
+          example: room_01HQ6A7J4X2JTKD5Z6Y9M8Q2F4
+        nickname:
+          type: string
+          maxLength: 24
+          example: 시훈
+        role:
+          type: string
+          enum:
+            - leader
+            - member
+          example: leader
+        joinedAt:
+          type: string
+          format: date-time
+          example: '2026-03-20T08:30:00Z'
+    Session:
+      type: object
+      required:
+        - sessionToken
+        - issuedAt
+        - expiresAt
+      properties:
+        sessionToken:
+          type: string
+          example: ses_6kJHf6P0g7hJ6KXvR3q2M1wL9a
+        issuedAt:
+          type: string
+          format: date-time
+          example: '2026-03-20T08:30:00Z'
+        expiresAt:
+          type: string
+          format: date-time
+          example: '2027-03-20T08:30:00Z'
+    RecurringQuest:
+      type: object
+      required:
+        - id
+        - roomId
+        - title
+        - description
+        - isActive
+        - sortOrder
+        - createdByMemberId
+        - createdAt
+        - updatedAt
+      properties:
+        id:
+          type: string
+          example: quest_01HQ6B8YJ0P8R6QK2F6N1H7C4M
+        roomId:
+          type: string
+          example: room_01HQ6A7J4X2JTKD5Z6Y9M8Q2F4
+        title:
+          type: string
+          example: 물 2리터 마시기
+        description:
+          type: string
+          example: 하루 동안 물 2리터 이상 마시고 체크하기
+        isActive:
+          type: boolean
+          example: true
+        sortOrder:
+          type: integer
+          minimum: 0
+          example: 0
+        createdByMemberId:
+          type: string
+          example: mem_01HQ6A9G9D22N17H2N3QH7S1BG
+        createdAt:
+          type: string
+          format: date-time
+          example: '2026-03-20T08:31:00Z'
+        updatedAt:
+          type: string
+          format: date-time
+          example: '2026-03-20T08:31:00Z'
+    Completion:
+      type: object
+      required:
+        - questId
+        - roomId
+        - date
+        - memberId
+        - completedAt
+      properties:
+        questId:
+          type: string
+          example: quest_01HQ6B8YJ0P8R6QK2F6N1H7C4M
+        roomId:
+          type: string
+          example: room_01HQ6A7J4X2JTKD5Z6Y9M8Q2F4
+        date:
+          type: string
+          format: date
+          example: '2026-03-20'
+        memberId:
+          type: string
+          example: mem_01HQ6AB5G4Y6M39RX8X9F3Q4QF
+        completedAt:
+          type: string
+          format: date-time
+          example: '2026-03-20T12:10:00Z'
+        note:
+          type: string
+          nullable: true
+          description: Optional member note for the completion.
+          example: 출근 전에 완료했어요
+    DailyGoalStatus:
+      type: string
+      enum:
+        - under_target
+        - goal_met
+        - perfect
+      description: |
+        Daily goal status calculated by the server.
+        The minimum required completion count is rounded from
+        (active recurring quest count × dailyGoalCutoffPercent / 100).
+    MemberDailyStatus:
+      type: object
+      required:
+        - memberId
+        - date
+        - status
+        - completedQuestCount
+        - requiredQuestCount
+        - totalActiveQuestCount
+      properties:
+        memberId:
+          type: string
+          example: mem_01HQ6AB5G4Y6M39RX8X9F3Q4QF
+        date:
+          type: string
+          format: date
+          example: '2026-03-20'
+        status:
+          $ref: '#/components/schemas/DailyGoalStatus'
+        completedQuestCount:
+          type: integer
+          minimum: 0
+          example: 5
+        requiredQuestCount:
+          type: integer
+          minimum: 0
+          example: 5
+        totalActiveQuestCount:
+          type: integer
+          minimum: 0
+          example: 10
+    HealthData:
+      type: object
+      required:
+        - status
+      properties:
+        status:
+          type: string
+          example: ok
+    HealthResponse:
+      type: object
+      required:
+        - data
+      properties:
+        data:
+          $ref: '#/components/schemas/HealthData'
+    CreateRoomRequest:
+      type: object
+      required:
+        - roomName
+        - leaderNickname
+        - finalGoal
+        - finalGoalDate
+        - timezone
+      properties:
+        roomName:
+          type: string
+          example: 100일 운동방
+        leaderNickname:
+          type: string
+          maxLength: 24
+          example: 시훈
+        finalGoal:
+          type: string
+          example: 100일 동안 매일 운동 인증하기
+        finalGoalDate:
+          type: string
+          format: date
+          description: Final target date for the room.
+          example: '2026-06-30'
+        timezone:
+          type: string
+          description: IANA timezone identifier for the room.
+          example: Asia/Seoul
+    CreateRoomData:
+      type: object
+      required:
+        - room
+        - member
+        - session
+        - inviteUrl
+      properties:
+        room:
+          $ref: '#/components/schemas/Room'
+        member:
+          $ref: '#/components/schemas/Member'
+        session:
+          $ref: '#/components/schemas/Session'
+        inviteUrl:
+          type: string
+          format: uri
+          example: https://app.example.com/join/ivt_0sUQGqPH9k6f0QGmYk8y
+    CreateRoomResponse:
+      type: object
+      required:
+        - data
+      properties:
+        data:
+          $ref: '#/components/schemas/CreateRoomData'
+    InviteSummaryData:
+      type: object
+      required:
+        - room
+        - recurringQuests
+      properties:
+        room:
+          $ref: '#/components/schemas/Room'
+        recurringQuests:
+          type: array
+          items:
+            $ref: '#/components/schemas/RecurringQuest'
+    InviteSummaryResponse:
+      type: object
+      required:
+        - data
+      properties:
+        data:
+          $ref: '#/components/schemas/InviteSummaryData'
+    JoinInviteMemberRequest:
+      type: object
+      required:
+        - nickname
+      properties:
+        nickname:
+          type: string
+          maxLength: 24
+          example: 민지
+    JoinInviteMemberData:
+      type: object
+      required:
+        - room
+        - member
+        - session
+      properties:
+        room:
+          $ref: '#/components/schemas/Room'
+        member:
+          $ref: '#/components/schemas/Member'
+        session:
+          $ref: '#/components/schemas/Session'
+    JoinInviteMemberResponse:
+      type: object
+      required:
+        - data
+      properties:
+        data:
+          $ref: '#/components/schemas/JoinInviteMemberData'
+    RoomDashboardData:
+      type: object
+      required:
+        - room
+        - todayDate
+        - currentMember
+        - members
+        - recurringQuests
+        - todayCompletions
+        - todayMemberStatuses
+      properties:
+        room:
+          $ref: '#/components/schemas/Room'
+        todayDate:
+          type: string
+          format: date
+          description: Today's date calculated in the room timezone.
+          example: '2026-03-20'
+        currentMember:
+          $ref: '#/components/schemas/Member'
+        members:
+          type: array
+          items:
+            $ref: '#/components/schemas/Member'
+        recurringQuests:
+          type: array
+          items:
+            $ref: '#/components/schemas/RecurringQuest'
+        todayCompletions:
+          type: array
+          items:
+            $ref: '#/components/schemas/Completion'
+        todayMemberStatuses:
+          type: array
+          items:
+            $ref: '#/components/schemas/MemberDailyStatus'
+    RoomDashboardResponse:
+      type: object
+      required:
+        - data
+      properties:
+        data:
+          $ref: '#/components/schemas/RoomDashboardData'
+    UpdateRoomRequest:
+      type: object
+      properties:
+        roomName:
+          type: string
+          example: 100일 홈트방
+        finalGoal:
+          type: string
+          example: 100일 동안 매일 홈트 인증하기
+        finalGoalDate:
+          type: string
+          format: date
+          example: '2026-07-31'
+        dailyGoalCutoffPercent:
+          type: integer
+          minimum: 1
+          maximum: 100
+          description: |
+            Daily goal cutoff percentage.
+            The minimum required completion count is rounded from
+            (active recurring quest count × dailyGoalCutoffPercent / 100).
+          example: 60
+      minProperties: 1
+    RoomData:
+      type: object
+      required:
+        - room
+      properties:
+        room:
+          $ref: '#/components/schemas/Room'
+    RoomResponse:
+      type: object
+      required:
+        - data
+      properties:
+        data:
+          $ref: '#/components/schemas/RoomData'
+    RoomListData:
+      type: object
+      required:
+        - rooms
+      properties:
+        rooms:
+          type: array
+          items:
+            $ref: '#/components/schemas/Room'
+    RoomListResponse:
+      type: object
+      required:
+        - data
+      properties:
+        data:
+          $ref: '#/components/schemas/RoomListData'
+    CreateRecurringQuestRequest:
+      type: object
+      required:
+        - title
+        - description
+      properties:
+        title:
+          type: string
+          example: 물 2리터 마시기
+        description:
+          type: string
+          example: 하루 동안 물 2리터 이상 마시고 체크하기
+        sortOrder:
+          type: integer
+          minimum: 0
+          description: Optional display order. If omitted, the server appends to the end.
+          example: 0
+    UpdateRecurringQuestRequest:
+      type: object
+      properties:
+        title:
+          type: string
+          example: 물 2.5리터 마시기
+        description:
+          type: string
+          example: 하루 동안 물 2.5리터 이상 마시고 체크하기
+        isActive:
+          type: boolean
+          example: true
+        sortOrder:
+          type: integer
+          minimum: 0
+          example: 1
+      minProperties: 1
+    RecurringQuestData:
+      type: object
+      required:
+        - recurringQuest
+      properties:
+        recurringQuest:
+          $ref: '#/components/schemas/RecurringQuest'
+    RecurringQuestResponse:
+      type: object
+      required:
+        - data
+      properties:
+        data:
+          $ref: '#/components/schemas/RecurringQuestData'
+    RecurringQuestListData:
+      type: object
+      required:
+        - items
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/RecurringQuest'
+    RecurringQuestListResponse:
+      type: object
+      required:
+        - data
+      properties:
+        data:
+          $ref: '#/components/schemas/RecurringQuestListData'
+    CompletionListData:
+      type: object
+      required:
+        - items
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Completion'
+    CompletionListResponse:
+      type: object
+      required:
+        - data
+      properties:
+        data:
+          $ref: '#/components/schemas/CompletionListData'
+    PutCompletionRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        note:
+          type: string
+          nullable: true
+          maxLength: 280
+          example: 출근 전에 완료했어요
+    CompletionData:
+      type: object
+      required:
+        - completion
+      properties:
+        completion:
+          $ref: '#/components/schemas/Completion'
+    CompletionResponse:
+      type: object
+      required:
+        - data
+      properties:
+        data:
+          $ref: '#/components/schemas/CompletionData'
+    RoomDailyStatusData:
+      type: object
+      required:
+        - roomId
+        - date
+        - recurringQuests
+        - completions
+        - memberStatuses
+      properties:
+        roomId:
+          type: string
+          example: room_01HQ6A7J4X2JTKD5Z6Y9M8Q2F4
+        date:
+          type: string
+          format: date
+          example: '2026-03-20'
+        recurringQuests:
+          type: array
+          items:
+            $ref: '#/components/schemas/RecurringQuest'
+        completions:
+          type: array
+          items:
+            $ref: '#/components/schemas/Completion'
+        memberStatuses:
+          type: array
+          items:
+            $ref: '#/components/schemas/MemberDailyStatus'
+    RoomDailyStatusResponse:
+      type: object
+      required:
+        - data
+      properties:
+        data:
+          $ref: '#/components/schemas/RoomDailyStatusData'
+    RotateInviteTokenData:
+      type: object
+      required:
+        - inviteToken
+        - inviteUrl
+      properties:
+        inviteToken:
+          type: string
+          example: ivt_6bK6pA1mQd3VxK2rC9sW
+        inviteUrl:
+          type: string
+          format: uri
+          example: https://app.example.com/join/ivt_6bK6pA1mQd3VxK2rC9sW
+    RotateInviteTokenResponse:
+      type: object
+      required:
+        - data
+      properties:
+        data:
+          $ref: '#/components/schemas/RotateInviteTokenData'
+paths:
+  /healthz:
+    get:
+      tags:
+        - Health
+      operationId: getHealth
+      summary: 헬스 체크
+      responses:
+        '200':
+          description: 서버 정상
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+  /v1/rooms:
+    get:
+      tags:
+        - Rooms
+      operationId: listRooms
+      summary: 공개 방 목록 조회
+      description: 메인 화면에서 보여줄 전체 방 목록을 최신 생성 순으로 조회한다.
+      responses:
+        '200':
+          description: 방 목록 조회 성공
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RoomListResponse'
+    post:
+      tags:
+        - Rooms
+      operationId: createRoom
+      summary: 방 생성
+      description: 방, 리더 멤버, 초기 세션을 생성한다. 방은 최종 목표 날짜까지 함께 달리는 단위를 의미한다.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateRoomRequest'
+      responses:
+        '201':
+          description: 방과 리더 멤버 생성 성공
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CreateRoomResponse'
+        '400':
+          description: 잘못된 요청
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '409':
+          description: 충돌
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /v1/invites/{inviteToken}:
+    get:
+      tags:
+        - Invites
+      operationId: getInviteSummary
+      summary: 초대 링크 정보 조회
+      parameters:
+        - name: inviteToken
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: 초대 링크 조회 성공
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InviteSummaryResponse'
+        '404':
+          description: 초대 링크를 찾을 수 없음
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /v1/invites/{inviteToken}/members:
+    post:
+      tags:
+        - Invites
+        - Members
+      operationId: joinInviteAsMember
+      summary: 초대 링크로 최초 참가
+      parameters:
+        - name: inviteToken
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/JoinInviteMemberRequest'
+      responses:
+        '201':
+          description: 멤버 생성 성공
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JoinInviteMemberResponse'
+        '400':
+          description: 잘못된 요청
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: 초대 링크를 찾을 수 없음
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '409':
+          description: 닉네임 중복 등 충돌
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /v1/rooms/{roomId}:
+    get:
+      tags:
+        - Rooms
+      operationId: getRoomDashboard
+      summary: 방 대시보드 조회
+      description: 현재 인증된 멤버 기준으로 방의 공동 목표와 오늘 수행 상태를 조회한다.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: roomId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: 방 대시보드 조회 성공
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RoomDashboardResponse'
+        '401':
+          description: 인증 실패
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: 권한 없음
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: 방을 찾을 수 없음
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    patch:
+      tags:
+        - Rooms
+      operationId: updateRoom
+      summary: 방 이름, 최종 목표 또는 최종 목표 날짜 수정
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: roomId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateRoomRequest'
+      responses:
+        '200':
+          description: 방 수정 성공
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RoomResponse'
+        '400':
+          description: 잘못된 요청
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: 인증 실패
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: 리더 권한 없음
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: 방을 찾을 수 없음
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /v1/rooms/{roomId}/members/{memberId}:
+    delete:
+      tags:
+        - Members
+      operationId: kickRoomMember
+      summary: 방 멤버 강퇴
+      description: |
+        리더가 방의 일반 멤버를 강퇴한다.
+        리더 자신이나 다른 리더는 강퇴할 수 없다.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: roomId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: memberId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '204':
+          description: 멤버 강퇴 성공
+        '401':
+          description: 인증 실패
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: 리더 권한이 없거나 강퇴할 수 없는 대상
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: 방 또는 멤버를 찾을 수 없음
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /v1/rooms/{roomId}/recurring-quests:
+    get:
+      tags:
+        - RecurringQuests
+      operationId: listRecurringQuests
+      summary: 반복 퀘스트 목록 조회
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: roomId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: 반복 퀘스트 목록 조회 성공
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RecurringQuestListResponse'
+        '401':
+          description: 인증 실패
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: 권한 없음
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: 방을 찾을 수 없음
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    post:
+      tags:
+        - RecurringQuests
+      operationId: createRecurringQuest
+      summary: 반복 퀘스트 생성
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: roomId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateRecurringQuestRequest'
+      responses:
+        '201':
+          description: 반복 퀘스트 생성 성공
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RecurringQuestResponse'
+        '400':
+          description: 잘못된 요청
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: 인증 실패
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: 리더 권한 없음
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: 방을 찾을 수 없음
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /v1/rooms/{roomId}/recurring-quests/{questId}:
+    patch:
+      tags:
+        - RecurringQuests
+      operationId: updateRecurringQuest
+      summary: 반복 퀘스트 수정
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: roomId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: questId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateRecurringQuestRequest'
+      responses:
+        '200':
+          description: 반복 퀘스트 수정 성공
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RecurringQuestResponse'
+        '400':
+          description: 잘못된 요청
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: 인증 실패
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: 리더 권한 없음
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: 방 또는 퀘스트를 찾을 수 없음
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /v1/rooms/{roomId}/completions:
+    get:
+      tags:
+        - Completions
+      operationId: listCompletions
+      summary: 날짜 범위별 완료 기록 조회
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: roomId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: from
+          in: query
+          required: true
+          schema:
+            type: string
+            format: date
+        - name: to
+          in: query
+          required: true
+          schema:
+            type: string
+            format: date
+        - name: questId
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: memberId
+          in: query
+          required: false
+          schema:
+            type: string
+      responses:
+        '200':
+          description: 완료 기록 조회 성공
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CompletionListResponse'
+        '400':
+          description: 잘못된 요청
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: 인증 실패
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: 권한 없음
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: 방을 찾을 수 없음
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /v1/rooms/{roomId}/daily-status/{date}:
+    get:
+      tags:
+        - Rooms
+        - Completions
+      operationId: getRoomDailyStatus
+      summary: 특정 날짜의 방 상태 조회
+      description: 방의 특정 날짜 기준 반복 퀘스트 목록과 완료 기록을 함께 조회한다.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: roomId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: date
+          in: path
+          required: true
+          schema:
+            type: string
+            format: date
+      responses:
+        '200':
+          description: 날짜별 방 상태 조회 성공
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RoomDailyStatusResponse'
+        '401':
+          description: 인증 실패
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: 권한 없음
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: 방을 찾을 수 없음
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /v1/rooms/{roomId}/recurring-quests/{questId}/completions/{date}:
+    put:
+      tags:
+        - Completions
+      operationId: putMyQuestCompletion
+      summary: 내 반복 퀘스트 완료 처리
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: roomId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: questId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: date
+          in: path
+          required: true
+          schema:
+            type: string
+            format: date
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PutCompletionRequest'
+      responses:
+        '200':
+          description: 완료 처리 성공
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CompletionResponse'
+        '400':
+          description: 잘못된 요청
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: 인증 실패
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: 권한 없음
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: 방 또는 퀘스트를 찾을 수 없음
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    delete:
+      tags:
+        - Completions
+      operationId: deleteMyQuestCompletion
+      summary: 내 완료 기록 취소
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: roomId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: questId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: date
+          in: path
+          required: true
+          schema:
+            type: string
+            format: date
+      responses:
+        '204':
+          description: 완료 기록 취소 성공
+        '401':
+          description: 인증 실패
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: 권한 없음
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: 방, 퀘스트 또는 완료 기록을 찾을 수 없음
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /v1/rooms/{roomId}/invite-token:rotate:
+    post:
+      tags:
+        - Rooms
+        - Invites
+      operationId: rotateInviteToken
+      summary: 초대 링크 재발급
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: roomId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: 초대 토큰 재발급 성공
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RotateInviteTokenResponse'
+        '401':
+          description: 인증 실패
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: 리더 권한 없음
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: 방을 찾을 수 없음
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
