@@ -11,12 +11,30 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const closeCurrentRoomDailyGoalCutoffRevision = `-- name: CloseCurrentRoomDailyGoalCutoffRevision :exec
+UPDATE room_daily_goal_cutoff_revisions
+SET ended_at = $2
+WHERE room_id = $1
+  AND ended_at IS NULL
+`
+
+type CloseCurrentRoomDailyGoalCutoffRevisionParams struct {
+	RoomID  string             `json:"room_id"`
+	EndedAt pgtype.Timestamptz `json:"ended_at"`
+}
+
+func (q *Queries) CloseCurrentRoomDailyGoalCutoffRevision(ctx context.Context, arg CloseCurrentRoomDailyGoalCutoffRevisionParams) error {
+	_, err := q.db.Exec(ctx, closeCurrentRoomDailyGoalCutoffRevision, arg.RoomID, arg.EndedAt)
+	return err
+}
+
 const createRoom = `-- name: CreateRoom :one
 INSERT INTO rooms (
   id,
   name,
   final_goal,
   final_goal_date,
+  visibility,
   timezone,
   invite_token
 )
@@ -26,18 +44,20 @@ VALUES (
   $3,
   $4,
   $5,
-  $6
+  $6,
+  $7
 )
-RETURNING id, name, final_goal, timezone, invite_token, created_at, updated_at, final_goal_date, daily_goal_cutoff_percent
+RETURNING id, name, final_goal, timezone, invite_token, created_at, updated_at, final_goal_date, daily_goal_cutoff_percent, visibility
 `
 
 type CreateRoomParams struct {
-	ID            string      `json:"id"`
-	Name          string      `json:"name"`
-	FinalGoal     string      `json:"final_goal"`
-	FinalGoalDate pgtype.Date `json:"final_goal_date"`
-	Timezone      string      `json:"timezone"`
-	InviteToken   string      `json:"invite_token"`
+	ID            string         `json:"id"`
+	Name          string         `json:"name"`
+	FinalGoal     string         `json:"final_goal"`
+	FinalGoalDate pgtype.Date    `json:"final_goal_date"`
+	Visibility    RoomVisibility `json:"visibility"`
+	Timezone      string         `json:"timezone"`
+	InviteToken   string         `json:"invite_token"`
 }
 
 func (q *Queries) CreateRoom(ctx context.Context, arg CreateRoomParams) (*Room, error) {
@@ -46,6 +66,7 @@ func (q *Queries) CreateRoom(ctx context.Context, arg CreateRoomParams) (*Room, 
 		arg.Name,
 		arg.FinalGoal,
 		arg.FinalGoalDate,
+		arg.Visibility,
 		arg.Timezone,
 		arg.InviteToken,
 	)
@@ -60,12 +81,47 @@ func (q *Queries) CreateRoom(ctx context.Context, arg CreateRoomParams) (*Room, 
 		&i.UpdatedAt,
 		&i.FinalGoalDate,
 		&i.DailyGoalCutoffPercent,
+		&i.Visibility,
+	)
+	return &i, err
+}
+
+const createRoomDailyGoalCutoffRevision = `-- name: CreateRoomDailyGoalCutoffRevision :one
+INSERT INTO room_daily_goal_cutoff_revisions (
+  room_id,
+  cutoff_percent,
+  started_at
+)
+VALUES (
+  $1,
+  $2,
+  $3
+)
+RETURNING id, room_id, cutoff_percent, started_at, ended_at, created_at
+`
+
+type CreateRoomDailyGoalCutoffRevisionParams struct {
+	RoomID        string             `json:"room_id"`
+	CutoffPercent int32              `json:"cutoff_percent"`
+	StartedAt     pgtype.Timestamptz `json:"started_at"`
+}
+
+func (q *Queries) CreateRoomDailyGoalCutoffRevision(ctx context.Context, arg CreateRoomDailyGoalCutoffRevisionParams) (*RoomDailyGoalCutoffRevision, error) {
+	row := q.db.QueryRow(ctx, createRoomDailyGoalCutoffRevision, arg.RoomID, arg.CutoffPercent, arg.StartedAt)
+	var i RoomDailyGoalCutoffRevision
+	err := row.Scan(
+		&i.ID,
+		&i.RoomID,
+		&i.CutoffPercent,
+		&i.StartedAt,
+		&i.EndedAt,
+		&i.CreatedAt,
 	)
 	return &i, err
 }
 
 const getRoomByID = `-- name: GetRoomByID :one
-SELECT id, name, final_goal, timezone, invite_token, created_at, updated_at, final_goal_date, daily_goal_cutoff_percent
+SELECT id, name, final_goal, timezone, invite_token, created_at, updated_at, final_goal_date, daily_goal_cutoff_percent, visibility
 FROM rooms
 WHERE id = $1
 LIMIT 1
@@ -84,12 +140,13 @@ func (q *Queries) GetRoomByID(ctx context.Context, id string) (*Room, error) {
 		&i.UpdatedAt,
 		&i.FinalGoalDate,
 		&i.DailyGoalCutoffPercent,
+		&i.Visibility,
 	)
 	return &i, err
 }
 
 const getRoomByInviteToken = `-- name: GetRoomByInviteToken :one
-SELECT id, name, final_goal, timezone, invite_token, created_at, updated_at, final_goal_date, daily_goal_cutoff_percent
+SELECT id, name, final_goal, timezone, invite_token, created_at, updated_at, final_goal_date, daily_goal_cutoff_percent, visibility
 FROM rooms
 WHERE invite_token = $1
 LIMIT 1
@@ -108,8 +165,31 @@ func (q *Queries) GetRoomByInviteToken(ctx context.Context, inviteToken string) 
 		&i.UpdatedAt,
 		&i.FinalGoalDate,
 		&i.DailyGoalCutoffPercent,
+		&i.Visibility,
 	)
 	return &i, err
+}
+
+const getRoomDailyGoalCutoffAtTimestamp = `-- name: GetRoomDailyGoalCutoffAtTimestamp :one
+SELECT cutoff_percent
+FROM room_daily_goal_cutoff_revisions
+WHERE room_id = $1
+  AND started_at < $2
+  AND (ended_at IS NULL OR ended_at >= $2)
+ORDER BY started_at DESC
+LIMIT 1
+`
+
+type GetRoomDailyGoalCutoffAtTimestampParams struct {
+	RoomID    string             `json:"room_id"`
+	StartedAt pgtype.Timestamptz `json:"started_at"`
+}
+
+func (q *Queries) GetRoomDailyGoalCutoffAtTimestamp(ctx context.Context, arg GetRoomDailyGoalCutoffAtTimestampParams) (int32, error) {
+	row := q.db.QueryRow(ctx, getRoomDailyGoalCutoffAtTimestamp, arg.RoomID, arg.StartedAt)
+	var cutoff_percent int32
+	err := row.Scan(&cutoff_percent)
+	return cutoff_percent, err
 }
 
 const getRoomSummaryByID = `-- name: GetRoomSummaryByID :one
@@ -119,6 +199,7 @@ SELECT
   r.final_goal,
   r.final_goal_date,
   r.daily_goal_cutoff_percent,
+  r.visibility,
   r.timezone,
   r.invite_token,
   (
@@ -126,12 +207,14 @@ SELECT
     FROM members m
     WHERE m.room_id = r.id
       AND m.role = 'leader'
+      AND m.removed_at IS NULL
     LIMIT 1
   ) AS leader_member_id,
   (
     SELECT COUNT(*)::int
     FROM members m
     WHERE m.room_id = r.id
+      AND m.removed_at IS NULL
   ) AS member_count,
   r.created_at,
   r.updated_at
@@ -146,6 +229,7 @@ type GetRoomSummaryByIDRow struct {
 	FinalGoal              string             `json:"final_goal"`
 	FinalGoalDate          pgtype.Date        `json:"final_goal_date"`
 	DailyGoalCutoffPercent int32              `json:"daily_goal_cutoff_percent"`
+	Visibility             RoomVisibility     `json:"visibility"`
 	Timezone               string             `json:"timezone"`
 	InviteToken            string             `json:"invite_token"`
 	LeaderMemberID         string             `json:"leader_member_id"`
@@ -163,6 +247,7 @@ func (q *Queries) GetRoomSummaryByID(ctx context.Context, id string) (*GetRoomSu
 		&i.FinalGoal,
 		&i.FinalGoalDate,
 		&i.DailyGoalCutoffPercent,
+		&i.Visibility,
 		&i.Timezone,
 		&i.InviteToken,
 		&i.LeaderMemberID,
@@ -180,6 +265,7 @@ SELECT
   r.final_goal,
   r.final_goal_date,
   r.daily_goal_cutoff_percent,
+  r.visibility,
   r.timezone,
   r.invite_token,
   (
@@ -187,12 +273,14 @@ SELECT
     FROM members m
     WHERE m.room_id = r.id
       AND m.role = 'leader'
+      AND m.removed_at IS NULL
     LIMIT 1
   ) AS leader_member_id,
   (
     SELECT COUNT(*)::int
     FROM members m
     WHERE m.room_id = r.id
+      AND m.removed_at IS NULL
   ) AS member_count,
   r.created_at,
   r.updated_at
@@ -207,6 +295,7 @@ type GetRoomSummaryByInviteTokenRow struct {
 	FinalGoal              string             `json:"final_goal"`
 	FinalGoalDate          pgtype.Date        `json:"final_goal_date"`
 	DailyGoalCutoffPercent int32              `json:"daily_goal_cutoff_percent"`
+	Visibility             RoomVisibility     `json:"visibility"`
 	Timezone               string             `json:"timezone"`
 	InviteToken            string             `json:"invite_token"`
 	LeaderMemberID         string             `json:"leader_member_id"`
@@ -224,6 +313,7 @@ func (q *Queries) GetRoomSummaryByInviteToken(ctx context.Context, inviteToken s
 		&i.FinalGoal,
 		&i.FinalGoalDate,
 		&i.DailyGoalCutoffPercent,
+		&i.Visibility,
 		&i.Timezone,
 		&i.InviteToken,
 		&i.LeaderMemberID,
@@ -241,6 +331,7 @@ SELECT
   r.final_goal,
   r.final_goal_date,
   r.daily_goal_cutoff_percent,
+  r.visibility,
   r.timezone,
   r.invite_token,
   (
@@ -248,16 +339,19 @@ SELECT
     FROM members m
     WHERE m.room_id = r.id
       AND m.role = 'leader'
+      AND m.removed_at IS NULL
     LIMIT 1
   ) AS leader_member_id,
   (
     SELECT COUNT(*)::int
     FROM members m
     WHERE m.room_id = r.id
+      AND m.removed_at IS NULL
   ) AS member_count,
   r.created_at,
   r.updated_at
 FROM rooms r
+WHERE r.visibility = 'public'
 ORDER BY r.created_at DESC
 `
 
@@ -267,6 +361,7 @@ type ListRoomSummariesRow struct {
 	FinalGoal              string             `json:"final_goal"`
 	FinalGoalDate          pgtype.Date        `json:"final_goal_date"`
 	DailyGoalCutoffPercent int32              `json:"daily_goal_cutoff_percent"`
+	Visibility             RoomVisibility     `json:"visibility"`
 	Timezone               string             `json:"timezone"`
 	InviteToken            string             `json:"invite_token"`
 	LeaderMemberID         string             `json:"leader_member_id"`
@@ -290,6 +385,7 @@ func (q *Queries) ListRoomSummaries(ctx context.Context) ([]*ListRoomSummariesRo
 			&i.FinalGoal,
 			&i.FinalGoalDate,
 			&i.DailyGoalCutoffPercent,
+			&i.Visibility,
 			&i.Timezone,
 			&i.InviteToken,
 			&i.LeaderMemberID,
@@ -311,7 +407,7 @@ const rotateInviteToken = `-- name: RotateInviteToken :one
 UPDATE rooms
 SET invite_token = $2
 WHERE id = $1
-RETURNING id, name, final_goal, timezone, invite_token, created_at, updated_at, final_goal_date, daily_goal_cutoff_percent
+RETURNING id, name, final_goal, timezone, invite_token, created_at, updated_at, final_goal_date, daily_goal_cutoff_percent, visibility
 `
 
 type RotateInviteTokenParams struct {
@@ -332,6 +428,7 @@ func (q *Queries) RotateInviteToken(ctx context.Context, arg RotateInviteTokenPa
 		&i.UpdatedAt,
 		&i.FinalGoalDate,
 		&i.DailyGoalCutoffPercent,
+		&i.Visibility,
 	)
 	return &i, err
 }
@@ -343,18 +440,20 @@ SET
   final_goal = $3,
   final_goal_date = $4,
   daily_goal_cutoff_percent = $5,
-  timezone = $6
+  visibility = $6,
+  timezone = $7
 WHERE id = $1
-RETURNING id, name, final_goal, timezone, invite_token, created_at, updated_at, final_goal_date, daily_goal_cutoff_percent
+RETURNING id, name, final_goal, timezone, invite_token, created_at, updated_at, final_goal_date, daily_goal_cutoff_percent, visibility
 `
 
 type UpdateRoomParams struct {
-	ID                     string      `json:"id"`
-	Name                   string      `json:"name"`
-	FinalGoal              string      `json:"final_goal"`
-	FinalGoalDate          pgtype.Date `json:"final_goal_date"`
-	DailyGoalCutoffPercent int32       `json:"daily_goal_cutoff_percent"`
-	Timezone               string      `json:"timezone"`
+	ID                     string         `json:"id"`
+	Name                   string         `json:"name"`
+	FinalGoal              string         `json:"final_goal"`
+	FinalGoalDate          pgtype.Date    `json:"final_goal_date"`
+	DailyGoalCutoffPercent int32          `json:"daily_goal_cutoff_percent"`
+	Visibility             RoomVisibility `json:"visibility"`
+	Timezone               string         `json:"timezone"`
 }
 
 func (q *Queries) UpdateRoom(ctx context.Context, arg UpdateRoomParams) (*Room, error) {
@@ -364,6 +463,7 @@ func (q *Queries) UpdateRoom(ctx context.Context, arg UpdateRoomParams) (*Room, 
 		arg.FinalGoal,
 		arg.FinalGoalDate,
 		arg.DailyGoalCutoffPercent,
+		arg.Visibility,
 		arg.Timezone,
 	)
 	var i Room
@@ -377,6 +477,7 @@ func (q *Queries) UpdateRoom(ctx context.Context, arg UpdateRoomParams) (*Room, 
 		&i.UpdatedAt,
 		&i.FinalGoalDate,
 		&i.DailyGoalCutoffPercent,
+		&i.Visibility,
 	)
 	return &i, err
 }

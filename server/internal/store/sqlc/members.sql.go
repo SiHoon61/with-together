@@ -7,12 +7,15 @@ package sqlcstore
 
 import (
 	"context"
+
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 const countMembersByRoomID = `-- name: CountMembersByRoomID :one
 SELECT COUNT(*)::int AS member_count
 FROM members
 WHERE room_id = $1
+  AND removed_at IS NULL
 `
 
 func (q *Queries) CountMembersByRoomID(ctx context.Context, roomID string) (int32, error) {
@@ -35,7 +38,7 @@ VALUES (
   $3,
   $4
 )
-RETURNING id, room_id, nickname, role, joined_at, updated_at
+RETURNING id, room_id, nickname, role, joined_at, updated_at, removed_at
 `
 
 type CreateMemberParams struct {
@@ -60,31 +63,17 @@ func (q *Queries) CreateMember(ctx context.Context, arg CreateMemberParams) (*Me
 		&i.Role,
 		&i.JoinedAt,
 		&i.UpdatedAt,
+		&i.RemovedAt,
 	)
 	return &i, err
 }
 
-const deleteMemberByRoomAndID = `-- name: DeleteMemberByRoomAndID :exec
-DELETE FROM members
-WHERE room_id = $1
-  AND id = $2
-`
-
-type DeleteMemberByRoomAndIDParams struct {
-	RoomID string `json:"room_id"`
-	ID     string `json:"id"`
-}
-
-func (q *Queries) DeleteMemberByRoomAndID(ctx context.Context, arg DeleteMemberByRoomAndIDParams) error {
-	_, err := q.db.Exec(ctx, deleteMemberByRoomAndID, arg.RoomID, arg.ID)
-	return err
-}
-
 const getLeaderByRoomID = `-- name: GetLeaderByRoomID :one
-SELECT id, room_id, nickname, role, joined_at, updated_at
+SELECT id, room_id, nickname, role, joined_at, updated_at, removed_at
 FROM members
 WHERE room_id = $1
   AND role = 'leader'
+  AND removed_at IS NULL
 LIMIT 1
 `
 
@@ -98,14 +87,16 @@ func (q *Queries) GetLeaderByRoomID(ctx context.Context, roomID string) (*Member
 		&i.Role,
 		&i.JoinedAt,
 		&i.UpdatedAt,
+		&i.RemovedAt,
 	)
 	return &i, err
 }
 
 const getMemberByID = `-- name: GetMemberByID :one
-SELECT id, room_id, nickname, role, joined_at, updated_at
+SELECT id, room_id, nickname, role, joined_at, updated_at, removed_at
 FROM members
 WHERE id = $1
+  AND removed_at IS NULL
 LIMIT 1
 `
 
@@ -119,15 +110,17 @@ func (q *Queries) GetMemberByID(ctx context.Context, id string) (*Member, error)
 		&i.Role,
 		&i.JoinedAt,
 		&i.UpdatedAt,
+		&i.RemovedAt,
 	)
 	return &i, err
 }
 
 const getMemberByRoomAndID = `-- name: GetMemberByRoomAndID :one
-SELECT id, room_id, nickname, role, joined_at, updated_at
+SELECT id, room_id, nickname, role, joined_at, updated_at, removed_at
 FROM members
 WHERE room_id = $1
   AND id = $2
+  AND removed_at IS NULL
 LIMIT 1
 `
 
@@ -146,15 +139,17 @@ func (q *Queries) GetMemberByRoomAndID(ctx context.Context, arg GetMemberByRoomA
 		&i.Role,
 		&i.JoinedAt,
 		&i.UpdatedAt,
+		&i.RemovedAt,
 	)
 	return &i, err
 }
 
 const getMemberByRoomAndNickname = `-- name: GetMemberByRoomAndNickname :one
-SELECT id, room_id, nickname, role, joined_at, updated_at
+SELECT id, room_id, nickname, role, joined_at, updated_at, removed_at
 FROM members
 WHERE room_id = $1
   AND nickname = $2
+  AND removed_at IS NULL
 LIMIT 1
 `
 
@@ -173,14 +168,16 @@ func (q *Queries) GetMemberByRoomAndNickname(ctx context.Context, arg GetMemberB
 		&i.Role,
 		&i.JoinedAt,
 		&i.UpdatedAt,
+		&i.RemovedAt,
 	)
 	return &i, err
 }
 
 const listMembersByRoomID = `-- name: ListMembersByRoomID :many
-SELECT id, room_id, nickname, role, joined_at, updated_at
+SELECT id, room_id, nickname, role, joined_at, updated_at, removed_at
 FROM members
 WHERE room_id = $1
+  AND removed_at IS NULL
 ORDER BY role ASC, joined_at ASC, id ASC
 `
 
@@ -200,6 +197,7 @@ func (q *Queries) ListMembersByRoomID(ctx context.Context, roomID string) ([]*Me
 			&i.Role,
 			&i.JoinedAt,
 			&i.UpdatedAt,
+			&i.RemovedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -209,4 +207,76 @@ func (q *Queries) ListMembersByRoomID(ctx context.Context, roomID string) ([]*Me
 		return nil, err
 	}
 	return items, nil
+}
+
+const listMembersByRoomIDAtTimestamp = `-- name: ListMembersByRoomIDAtTimestamp :many
+SELECT id, room_id, nickname, role, joined_at, updated_at, removed_at
+FROM members
+WHERE room_id = $1
+  AND joined_at < $2
+  AND (removed_at IS NULL OR removed_at >= $2)
+ORDER BY role ASC, joined_at ASC, id ASC
+`
+
+type ListMembersByRoomIDAtTimestampParams struct {
+	RoomID   string             `json:"room_id"`
+	JoinedAt pgtype.Timestamptz `json:"joined_at"`
+}
+
+func (q *Queries) ListMembersByRoomIDAtTimestamp(ctx context.Context, arg ListMembersByRoomIDAtTimestampParams) ([]*Member, error) {
+	rows, err := q.db.Query(ctx, listMembersByRoomIDAtTimestamp, arg.RoomID, arg.JoinedAt)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []*Member
+	for rows.Next() {
+		var i Member
+		if err := rows.Scan(
+			&i.ID,
+			&i.RoomID,
+			&i.Nickname,
+			&i.Role,
+			&i.JoinedAt,
+			&i.UpdatedAt,
+			&i.RemovedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, &i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const removeMemberByRoomAndID = `-- name: RemoveMemberByRoomAndID :one
+UPDATE members
+SET removed_at = $3
+WHERE room_id = $1
+  AND id = $2
+  AND removed_at IS NULL
+RETURNING id, room_id, nickname, role, joined_at, updated_at, removed_at
+`
+
+type RemoveMemberByRoomAndIDParams struct {
+	RoomID    string             `json:"room_id"`
+	ID        string             `json:"id"`
+	RemovedAt pgtype.Timestamptz `json:"removed_at"`
+}
+
+func (q *Queries) RemoveMemberByRoomAndID(ctx context.Context, arg RemoveMemberByRoomAndIDParams) (*Member, error) {
+	row := q.db.QueryRow(ctx, removeMemberByRoomAndID, arg.RoomID, arg.ID, arg.RemovedAt)
+	var i Member
+	err := row.Scan(
+		&i.ID,
+		&i.RoomID,
+		&i.Nickname,
+		&i.Role,
+		&i.JoinedAt,
+		&i.UpdatedAt,
+		&i.RemovedAt,
+	)
+	return &i, err
 }

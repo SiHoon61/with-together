@@ -27,6 +27,7 @@ type CreateRoomInput struct {
 	LeaderNickname string
 	FinalGoal      string
 	FinalGoalDate  time.Time
+	Visibility     string
 	Timezone       string
 }
 
@@ -89,6 +90,7 @@ type UpdateRoomInput struct {
 	FinalGoal              *string
 	FinalGoalDate          *time.Time
 	DailyGoalCutoffPercent *int
+	Visibility             *string
 }
 
 type RotateInviteTokenResult struct {
@@ -108,7 +110,6 @@ type UpdateRecurringQuestInput struct {
 	Title       *string
 	Description *string
 	SortOrder   *int
-	IsActive    *bool
 }
 
 type ListCompletionsInput struct {
@@ -122,6 +123,7 @@ type ListCompletionsInput struct {
 type RoomDailyStatusResult struct {
 	RoomID          string
 	Date            time.Time
+	Members         []*sqlcstore.Member
 	RecurringQuests []*sqlcstore.RecurringQuest
 	Completions     []*sqlcstore.Completion
 	MemberStatuses  []MemberDailyStatusResult
@@ -152,6 +154,11 @@ func New(store *store.Store) *Service {
 
 func (s *Service) CreateRoom(ctx context.Context, input CreateRoomInput) (*CreateRoomResult, error) {
 	if err := validateCreateRoomInput(input); err != nil {
+		return nil, err
+	}
+
+	visibility, err := normalizeRoomVisibility(input.Visibility)
+	if err != nil {
 		return nil, err
 	}
 
@@ -190,13 +197,23 @@ func (s *Service) CreateRoom(ctx context.Context, input CreateRoomInput) (*Creat
 	)
 
 	err = s.store.WithTx(ctx, func(q *sqlcstore.Queries) error {
-		if _, err := q.CreateRoom(ctx, sqlcstore.CreateRoomParams{
+		room, err := q.CreateRoom(ctx, sqlcstore.CreateRoomParams{
 			ID:            roomID,
 			Name:          input.RoomName,
 			FinalGoal:     input.FinalGoal,
 			FinalGoalDate: pgDate(input.FinalGoalDate),
+			Visibility:    visibility,
 			Timezone:      input.Timezone,
 			InviteToken:   inviteToken,
+		})
+		if err != nil {
+			return wrapQueryError(err)
+		}
+
+		if _, err := q.CreateRoomDailyGoalCutoffRevision(ctx, sqlcstore.CreateRoomDailyGoalCutoffRevisionParams{
+			RoomID:        roomID,
+			CutoffPercent: room.DailyGoalCutoffPercent,
+			StartedAt:     room.CreatedAt,
 		}); err != nil {
 			return wrapQueryError(err)
 		}
@@ -456,6 +473,13 @@ func (s *Service) UpdateRoom(ctx context.Context, auth *AuthContext, input Updat
 	if input.DailyGoalCutoffPercent != nil {
 		dailyGoalCutoffPercent = *input.DailyGoalCutoffPercent
 	}
+	visibility := room.Visibility
+	if input.Visibility != nil {
+		visibility, err = normalizeRoomVisibility(*input.Visibility)
+		if err != nil {
+			return nil, err
+		}
+	}
 
 	if strings.TrimSpace(name) == "" || strings.TrimSpace(finalGoal) == "" || finalGoalDate.IsZero() {
 		return nil, fmt.Errorf("%w: roomName, finalGoal, and finalGoalDate must not be empty", ErrInvalidInput)
@@ -464,15 +488,40 @@ func (s *Service) UpdateRoom(ctx context.Context, auth *AuthContext, input Updat
 		return nil, fmt.Errorf("%w: dailyGoalCutoffPercent must be between 1 and 100", ErrInvalidInput)
 	}
 
-	if _, err := s.store.Queries().UpdateRoom(ctx, sqlcstore.UpdateRoomParams{
-		ID:                     input.RoomID,
-		Name:                   name,
-		FinalGoal:              finalGoal,
-		FinalGoalDate:          pgDate(finalGoalDate),
-		DailyGoalCutoffPercent: int32(dailyGoalCutoffPercent),
-		Timezone:               room.Timezone,
+	now := s.now()
+	if err := s.store.WithTx(ctx, func(q *sqlcstore.Queries) error {
+		if _, err := q.UpdateRoom(ctx, sqlcstore.UpdateRoomParams{
+			ID:                     input.RoomID,
+			Name:                   name,
+			FinalGoal:              finalGoal,
+			FinalGoalDate:          pgDate(finalGoalDate),
+			DailyGoalCutoffPercent: int32(dailyGoalCutoffPercent),
+			Visibility:             visibility,
+			Timezone:               room.Timezone,
+		}); err != nil {
+			return wrapQueryError(err)
+		}
+
+		if dailyGoalCutoffPercent != int(room.DailyGoalCutoffPercent) {
+			revisionTime := timestamptz(now)
+			if err := q.CloseCurrentRoomDailyGoalCutoffRevision(ctx, sqlcstore.CloseCurrentRoomDailyGoalCutoffRevisionParams{
+				RoomID:  input.RoomID,
+				EndedAt: revisionTime,
+			}); err != nil {
+				return wrapQueryError(err)
+			}
+			if _, err := q.CreateRoomDailyGoalCutoffRevision(ctx, sqlcstore.CreateRoomDailyGoalCutoffRevisionParams{
+				RoomID:        input.RoomID,
+				CutoffPercent: int32(dailyGoalCutoffPercent),
+				StartedAt:     revisionTime,
+			}); err != nil {
+				return wrapQueryError(err)
+			}
+		}
+
+		return nil
 	}); err != nil {
-		return nil, wrapQueryError(err)
+		return nil, err
 	}
 
 	return s.store.Queries().GetRoomSummaryByID(ctx, input.RoomID)
@@ -501,9 +550,18 @@ func (s *Service) KickRoomMember(ctx context.Context, auth *AuthContext, roomID 
 			return ErrCannotKickLeader
 		}
 
-		if err := q.DeleteMemberByRoomAndID(ctx, sqlcstore.DeleteMemberByRoomAndIDParams{
-			RoomID: roomID,
-			ID:     memberID,
+		removedAt := timestamptz(s.now())
+		if _, err := q.RemoveMemberByRoomAndID(ctx, sqlcstore.RemoveMemberByRoomAndIDParams{
+			RoomID:    roomID,
+			ID:        memberID,
+			RemovedAt: removedAt,
+		}); err != nil {
+			return wrapQueryError(err)
+		}
+
+		if err := q.RevokeSessionsByMemberID(ctx, sqlcstore.RevokeSessionsByMemberIDParams{
+			MemberID:  memberID,
+			RevokedAt: removedAt,
 		}); err != nil {
 			return wrapQueryError(err)
 		}
@@ -567,17 +625,35 @@ func (s *Service) CreateRecurringQuest(ctx context.Context, auth *AuthContext, i
 		return nil, fmt.Errorf("generate recurring quest id: %w", err)
 	}
 
-	quest, err := s.store.Queries().CreateRecurringQuest(ctx, sqlcstore.CreateRecurringQuestParams{
-		ID:                questID,
-		RoomID:            input.RoomID,
-		Title:             strings.TrimSpace(input.Title),
-		Description:       strings.TrimSpace(input.Description),
-		SortOrder:         sortOrder,
-		IsActive:          true,
-		CreatedByMemberID: auth.MemberID,
-	})
-	if err != nil {
-		return nil, wrapQueryError(err)
+	var quest *sqlcstore.RecurringQuest
+	if err := s.store.WithTx(ctx, func(q *sqlcstore.Queries) error {
+		quest, err = q.CreateRecurringQuest(ctx, sqlcstore.CreateRecurringQuestParams{
+			ID:                questID,
+			RoomID:            input.RoomID,
+			Title:             strings.TrimSpace(input.Title),
+			Description:       strings.TrimSpace(input.Description),
+			SortOrder:         sortOrder,
+			IsActive:          true,
+			CreatedByMemberID: auth.MemberID,
+		})
+		if err != nil {
+			return wrapQueryError(err)
+		}
+
+		if _, err := q.CreateRecurringQuestVersion(ctx, sqlcstore.CreateRecurringQuestVersionParams{
+			QuestID:     quest.ID,
+			RoomID:      quest.RoomID,
+			Title:       quest.Title,
+			Description: quest.Description,
+			SortOrder:   quest.SortOrder,
+			StartedAt:   quest.CreatedAt,
+		}); err != nil {
+			return wrapQueryError(err)
+		}
+
+		return nil
+	}); err != nil {
+		return nil, err
 	}
 
 	return quest, nil
@@ -611,28 +687,92 @@ func (s *Service) UpdateRecurringQuest(ctx context.Context, auth *AuthContext, i
 		}
 		sortOrder = int32(*input.SortOrder)
 	}
-	isActive := quest.IsActive
-	if input.IsActive != nil {
-		isActive = *input.IsActive
-	}
 
 	if strings.TrimSpace(title) == "" || strings.TrimSpace(description) == "" {
 		return nil, fmt.Errorf("%w: title and description must not be empty", ErrInvalidInput)
 	}
 
-	updated, err := s.store.Queries().UpdateRecurringQuest(ctx, sqlcstore.UpdateRecurringQuestParams{
-		RoomID:      input.RoomID,
-		ID:          input.QuestID,
-		Title:       title,
-		Description: description,
-		SortOrder:   sortOrder,
-		IsActive:    isActive,
-	})
-	if err != nil {
-		return nil, wrapQueryError(err)
+	if title == quest.Title && description == quest.Description && sortOrder == quest.SortOrder {
+		return quest, nil
+	}
+
+	now := timestamptz(s.now())
+	var updated *sqlcstore.RecurringQuest
+	if err := s.store.WithTx(ctx, func(q *sqlcstore.Queries) error {
+		if err := q.CloseCurrentRecurringQuestVersion(ctx, sqlcstore.CloseCurrentRecurringQuestVersionParams{
+			RoomID:  input.RoomID,
+			QuestID: input.QuestID,
+			EndedAt: now,
+		}); err != nil {
+			return wrapQueryError(err)
+		}
+
+		updated, err = q.UpdateRecurringQuest(ctx, sqlcstore.UpdateRecurringQuestParams{
+			RoomID:      input.RoomID,
+			ID:          input.QuestID,
+			Title:       title,
+			Description: description,
+			SortOrder:   sortOrder,
+		})
+		if err != nil {
+			return wrapQueryError(err)
+		}
+
+		if _, err := q.CreateRecurringQuestVersion(ctx, sqlcstore.CreateRecurringQuestVersionParams{
+			QuestID:     input.QuestID,
+			RoomID:      input.RoomID,
+			Title:       title,
+			Description: description,
+			SortOrder:   sortOrder,
+			StartedAt:   now,
+		}); err != nil {
+			return wrapQueryError(err)
+		}
+
+		return nil
+	}); err != nil {
+		return nil, err
 	}
 
 	return updated, nil
+}
+
+func (s *Service) DeleteRecurringQuest(ctx context.Context, auth *AuthContext, roomID string, questID string) error {
+	if err := requireLeader(auth, roomID); err != nil {
+		return err
+	}
+
+	if strings.TrimSpace(questID) == "" {
+		return fmt.Errorf("%w: questId is required", ErrInvalidInput)
+	}
+
+	now := timestamptz(s.now())
+	return s.store.WithTx(ctx, func(q *sqlcstore.Queries) error {
+		if _, err := q.GetRecurringQuestByID(ctx, sqlcstore.GetRecurringQuestByIDParams{
+			RoomID: roomID,
+			ID:     questID,
+		}); err != nil {
+			return wrapQueryError(err)
+		}
+
+		if err := q.CloseCurrentRecurringQuestVersion(ctx, sqlcstore.CloseCurrentRecurringQuestVersionParams{
+			RoomID:  roomID,
+			QuestID: questID,
+			EndedAt: now,
+		}); err != nil {
+			return wrapQueryError(err)
+		}
+
+		if _, err := q.ArchiveRecurringQuest(ctx, sqlcstore.ArchiveRecurringQuestParams{
+			RoomID:     roomID,
+			ID:         questID,
+			ArchivedAt: now,
+		}); err != nil {
+			return wrapQueryError(err)
+		}
+
+		return nil
+	})
 }
 
 func (s *Service) ListCompletions(ctx context.Context, auth *AuthContext, input ListCompletionsInput) ([]*sqlcstore.Completion, error) {
@@ -665,14 +805,34 @@ func (s *Service) GetRoomDailyStatus(ctx context.Context, auth *AuthContext, roo
 		return nil, err
 	}
 
-	members, err := s.store.Queries().ListMembersByRoomID(ctx, roomID)
+	room, err := s.store.Queries().GetRoomByID(ctx, roomID)
 	if err != nil {
 		return nil, wrapQueryError(err)
 	}
 
-	quests, err := s.store.Queries().ListRecurringQuestsByRoomID(ctx, roomID)
+	snapshotAt, err := roomDateEndExclusive(room.Timezone, date)
+	if err != nil {
+		return nil, fmt.Errorf("%w: invalid room timezone", ErrInvalidInput)
+	}
+
+	members, err := s.store.Queries().ListMembersByRoomIDAtTimestamp(ctx, sqlcstore.ListMembersByRoomIDAtTimestampParams{
+		RoomID:   roomID,
+		JoinedAt: timestamptz(snapshotAt),
+	})
 	if err != nil {
 		return nil, wrapQueryError(err)
+	}
+
+	questRows, err := s.store.Queries().ListRecurringQuestsByRoomIDAtTimestamp(ctx, sqlcstore.ListRecurringQuestsByRoomIDAtTimestampParams{
+		RoomID:    roomID,
+		CreatedAt: timestamptz(snapshotAt),
+	})
+	if err != nil {
+		return nil, wrapQueryError(err)
+	}
+	quests := make([]*sqlcstore.RecurringQuest, 0, len(questRows))
+	for _, row := range questRows {
+		quests = append(quests, recurringQuestFromSnapshotRow(row))
 	}
 
 	completions, err := s.store.Queries().ListCompletionsByRoomAndDate(ctx, sqlcstore.ListCompletionsByRoomAndDateParams{
@@ -683,12 +843,25 @@ func (s *Service) GetRoomDailyStatus(ctx context.Context, auth *AuthContext, roo
 		return nil, wrapQueryError(err)
 	}
 
+	cutoffPercent, err := s.store.Queries().GetRoomDailyGoalCutoffAtTimestamp(ctx, sqlcstore.GetRoomDailyGoalCutoffAtTimestampParams{
+		RoomID:    roomID,
+		StartedAt: timestamptz(snapshotAt),
+	})
+	if err != nil {
+		if errors.Is(wrapQueryError(err), ErrNotFound) {
+			cutoffPercent = room.DailyGoalCutoffPercent
+		} else {
+			return nil, wrapQueryError(err)
+		}
+	}
+
 	return &RoomDailyStatusResult{
 		RoomID:          roomID,
 		Date:            date,
+		Members:         members,
 		RecurringQuests: quests,
 		Completions:     completions,
-		MemberStatuses:  calculateMemberDailyStatuses(date, members, quests, completions, auth.DailyGoalCutoffPercent),
+		MemberStatuses:  calculateMemberDailyStatuses(date, members, quests, completions, int(cutoffPercent)),
 	}, nil
 }
 
@@ -753,6 +926,8 @@ func validateCreateRoomInput(input CreateRoomInput) error {
 		return fmt.Errorf("%w: finalGoal is required", ErrInvalidInput)
 	case input.FinalGoalDate.IsZero():
 		return fmt.Errorf("%w: finalGoalDate is required", ErrInvalidInput)
+	case strings.TrimSpace(input.Visibility) == "":
+		return fmt.Errorf("%w: visibility is required", ErrInvalidInput)
 	case strings.TrimSpace(input.Timezone) == "":
 		return fmt.Errorf("%w: timezone is required", ErrInvalidInput)
 	case len([]rune(strings.TrimSpace(input.LeaderNickname))) > 24:
@@ -870,6 +1045,16 @@ func roomTodayDate(timezone string, now time.Time) (time.Time, error) {
 	return time.Date(localNow.Year(), localNow.Month(), localNow.Day(), 0, 0, 0, 0, location), nil
 }
 
+func roomDateEndExclusive(timezone string, date time.Time) (time.Time, error) {
+	location, err := time.LoadLocation(timezone)
+	if err != nil {
+		return time.Time{}, err
+	}
+
+	dayStart := time.Date(date.Year(), date.Month(), date.Day(), 0, 0, 0, 0, location)
+	return dayStart.AddDate(0, 0, 1), nil
+}
+
 func pgDate(t time.Time) pgtype.Date {
 	return pgtype.Date{
 		Time:  time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, t.Location()),
@@ -902,6 +1087,31 @@ func mustValidDate(value pgtype.Date) time.Time {
 	}
 
 	return value.Time
+}
+
+func normalizeRoomVisibility(value string) (sqlcstore.RoomVisibility, error) {
+	switch strings.TrimSpace(value) {
+	case string(sqlcstore.RoomVisibilityPublic):
+		return sqlcstore.RoomVisibilityPublic, nil
+	case string(sqlcstore.RoomVisibilityPrivate):
+		return sqlcstore.RoomVisibilityPrivate, nil
+	default:
+		return "", fmt.Errorf("%w: visibility must be public or private", ErrInvalidInput)
+	}
+}
+
+func recurringQuestFromSnapshotRow(row *sqlcstore.ListRecurringQuestsByRoomIDAtTimestampRow) *sqlcstore.RecurringQuest {
+	return &sqlcstore.RecurringQuest{
+		ID:                row.ID,
+		RoomID:            row.RoomID,
+		Title:             row.Title,
+		Description:       row.Description,
+		SortOrder:         row.SortOrder,
+		IsActive:          row.IsActive,
+		CreatedByMemberID: row.CreatedByMemberID,
+		CreatedAt:         row.CreatedAt,
+		UpdatedAt:         row.UpdatedAt,
+	}
 }
 
 func calculateMemberDailyStatuses(

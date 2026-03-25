@@ -7,7 +7,63 @@ package sqlcstore
 
 import (
 	"context"
+
+	"github.com/jackc/pgx/v5/pgtype"
 )
+
+const archiveRecurringQuest = `-- name: ArchiveRecurringQuest :one
+UPDATE recurring_quests
+SET
+  archived_at = $3,
+  is_active = FALSE
+WHERE room_id = $1
+  AND id = $2
+  AND archived_at IS NULL
+RETURNING id, room_id, title, description, sort_order, is_active, created_by_member_id, created_at, updated_at, archived_at
+`
+
+type ArchiveRecurringQuestParams struct {
+	RoomID     string             `json:"room_id"`
+	ID         string             `json:"id"`
+	ArchivedAt pgtype.Timestamptz `json:"archived_at"`
+}
+
+func (q *Queries) ArchiveRecurringQuest(ctx context.Context, arg ArchiveRecurringQuestParams) (*RecurringQuest, error) {
+	row := q.db.QueryRow(ctx, archiveRecurringQuest, arg.RoomID, arg.ID, arg.ArchivedAt)
+	var i RecurringQuest
+	err := row.Scan(
+		&i.ID,
+		&i.RoomID,
+		&i.Title,
+		&i.Description,
+		&i.SortOrder,
+		&i.IsActive,
+		&i.CreatedByMemberID,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.ArchivedAt,
+	)
+	return &i, err
+}
+
+const closeCurrentRecurringQuestVersion = `-- name: CloseCurrentRecurringQuestVersion :exec
+UPDATE recurring_quest_versions
+SET ended_at = $3
+WHERE room_id = $1
+  AND quest_id = $2
+  AND ended_at IS NULL
+`
+
+type CloseCurrentRecurringQuestVersionParams struct {
+	RoomID  string             `json:"room_id"`
+	QuestID string             `json:"quest_id"`
+	EndedAt pgtype.Timestamptz `json:"ended_at"`
+}
+
+func (q *Queries) CloseCurrentRecurringQuestVersion(ctx context.Context, arg CloseCurrentRecurringQuestVersionParams) error {
+	_, err := q.db.Exec(ctx, closeCurrentRecurringQuestVersion, arg.RoomID, arg.QuestID, arg.EndedAt)
+	return err
+}
 
 const createRecurringQuest = `-- name: CreateRecurringQuest :one
 INSERT INTO recurring_quests (
@@ -28,7 +84,7 @@ VALUES (
   $6,
   $7
 )
-RETURNING id, room_id, title, description, sort_order, is_active, created_by_member_id, created_at, updated_at
+RETURNING id, room_id, title, description, sort_order, is_active, created_by_member_id, created_at, updated_at, archived_at
 `
 
 type CreateRecurringQuestParams struct {
@@ -62,6 +118,60 @@ func (q *Queries) CreateRecurringQuest(ctx context.Context, arg CreateRecurringQ
 		&i.CreatedByMemberID,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.ArchivedAt,
+	)
+	return &i, err
+}
+
+const createRecurringQuestVersion = `-- name: CreateRecurringQuestVersion :one
+INSERT INTO recurring_quest_versions (
+  quest_id,
+  room_id,
+  title,
+  description,
+  sort_order,
+  started_at
+)
+VALUES (
+  $1,
+  $2,
+  $3,
+  $4,
+  $5,
+  $6
+)
+RETURNING id, quest_id, room_id, title, description, sort_order, started_at, ended_at, created_at
+`
+
+type CreateRecurringQuestVersionParams struct {
+	QuestID     string             `json:"quest_id"`
+	RoomID      string             `json:"room_id"`
+	Title       string             `json:"title"`
+	Description string             `json:"description"`
+	SortOrder   int32              `json:"sort_order"`
+	StartedAt   pgtype.Timestamptz `json:"started_at"`
+}
+
+func (q *Queries) CreateRecurringQuestVersion(ctx context.Context, arg CreateRecurringQuestVersionParams) (*RecurringQuestVersion, error) {
+	row := q.db.QueryRow(ctx, createRecurringQuestVersion,
+		arg.QuestID,
+		arg.RoomID,
+		arg.Title,
+		arg.Description,
+		arg.SortOrder,
+		arg.StartedAt,
+	)
+	var i RecurringQuestVersion
+	err := row.Scan(
+		&i.ID,
+		&i.QuestID,
+		&i.RoomID,
+		&i.Title,
+		&i.Description,
+		&i.SortOrder,
+		&i.StartedAt,
+		&i.EndedAt,
+		&i.CreatedAt,
 	)
 	return &i, err
 }
@@ -70,6 +180,7 @@ const getNextRecurringQuestSortOrder = `-- name: GetNextRecurringQuestSortOrder 
 SELECT COALESCE(MAX(sort_order) + 1, 0)::int AS next_sort_order
 FROM recurring_quests
 WHERE room_id = $1
+  AND archived_at IS NULL
 `
 
 func (q *Queries) GetNextRecurringQuestSortOrder(ctx context.Context, roomID string) (int32, error) {
@@ -80,10 +191,11 @@ func (q *Queries) GetNextRecurringQuestSortOrder(ctx context.Context, roomID str
 }
 
 const getRecurringQuestByID = `-- name: GetRecurringQuestByID :one
-SELECT id, room_id, title, description, sort_order, is_active, created_by_member_id, created_at, updated_at
+SELECT id, room_id, title, description, sort_order, is_active, created_by_member_id, created_at, updated_at, archived_at
 FROM recurring_quests
 WHERE room_id = $1
   AND id = $2
+  AND archived_at IS NULL
 LIMIT 1
 `
 
@@ -105,14 +217,16 @@ func (q *Queries) GetRecurringQuestByID(ctx context.Context, arg GetRecurringQue
 		&i.CreatedByMemberID,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.ArchivedAt,
 	)
 	return &i, err
 }
 
 const listActiveRecurringQuestsByRoomID = `-- name: ListActiveRecurringQuestsByRoomID :many
-SELECT id, room_id, title, description, sort_order, is_active, created_by_member_id, created_at, updated_at
+SELECT id, room_id, title, description, sort_order, is_active, created_by_member_id, created_at, updated_at, archived_at
 FROM recurring_quests
 WHERE room_id = $1
+  AND archived_at IS NULL
   AND is_active = TRUE
 ORDER BY sort_order ASC, created_at ASC, id ASC
 `
@@ -136,6 +250,7 @@ func (q *Queries) ListActiveRecurringQuestsByRoomID(ctx context.Context, roomID 
 			&i.CreatedByMemberID,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.ArchivedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -148,9 +263,10 @@ func (q *Queries) ListActiveRecurringQuestsByRoomID(ctx context.Context, roomID 
 }
 
 const listRecurringQuestsByRoomID = `-- name: ListRecurringQuestsByRoomID :many
-SELECT id, room_id, title, description, sort_order, is_active, created_by_member_id, created_at, updated_at
+SELECT id, room_id, title, description, sort_order, is_active, created_by_member_id, created_at, updated_at, archived_at
 FROM recurring_quests
 WHERE room_id = $1
+  AND archived_at IS NULL
 ORDER BY sort_order ASC, created_at ASC, id ASC
 `
 
@@ -173,6 +289,77 @@ func (q *Queries) ListRecurringQuestsByRoomID(ctx context.Context, roomID string
 			&i.CreatedByMemberID,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.ArchivedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, &i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listRecurringQuestsByRoomIDAtTimestamp = `-- name: ListRecurringQuestsByRoomIDAtTimestamp :many
+SELECT
+  q.id,
+  q.room_id,
+  v.title,
+  v.description,
+  TRUE AS is_active,
+  v.sort_order,
+  q.created_by_member_id,
+  q.created_at,
+  COALESCE(v.ended_at, q.updated_at) AS updated_at
+FROM recurring_quests q
+JOIN recurring_quest_versions v
+  ON v.quest_id = q.id
+ AND v.room_id = q.room_id
+WHERE q.room_id = $1
+  AND q.created_at < $2
+  AND (q.archived_at IS NULL OR q.archived_at >= $2)
+  AND v.started_at < $2
+  AND (v.ended_at IS NULL OR v.ended_at >= $2)
+ORDER BY v.sort_order ASC, q.created_at ASC, q.id ASC
+`
+
+type ListRecurringQuestsByRoomIDAtTimestampParams struct {
+	RoomID    string             `json:"room_id"`
+	CreatedAt pgtype.Timestamptz `json:"created_at"`
+}
+
+type ListRecurringQuestsByRoomIDAtTimestampRow struct {
+	ID                string             `json:"id"`
+	RoomID            string             `json:"room_id"`
+	Title             string             `json:"title"`
+	Description       string             `json:"description"`
+	IsActive          bool               `json:"is_active"`
+	SortOrder         int32              `json:"sort_order"`
+	CreatedByMemberID string             `json:"created_by_member_id"`
+	CreatedAt         pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt         pgtype.Timestamptz `json:"updated_at"`
+}
+
+func (q *Queries) ListRecurringQuestsByRoomIDAtTimestamp(ctx context.Context, arg ListRecurringQuestsByRoomIDAtTimestampParams) ([]*ListRecurringQuestsByRoomIDAtTimestampRow, error) {
+	rows, err := q.db.Query(ctx, listRecurringQuestsByRoomIDAtTimestamp, arg.RoomID, arg.CreatedAt)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []*ListRecurringQuestsByRoomIDAtTimestampRow
+	for rows.Next() {
+		var i ListRecurringQuestsByRoomIDAtTimestampRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.RoomID,
+			&i.Title,
+			&i.Description,
+			&i.IsActive,
+			&i.SortOrder,
+			&i.CreatedByMemberID,
+			&i.CreatedAt,
+			&i.UpdatedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -189,11 +376,11 @@ UPDATE recurring_quests
 SET
   title = $3,
   description = $4,
-  sort_order = $5,
-  is_active = $6
+  sort_order = $5
 WHERE room_id = $1
   AND id = $2
-RETURNING id, room_id, title, description, sort_order, is_active, created_by_member_id, created_at, updated_at
+  AND archived_at IS NULL
+RETURNING id, room_id, title, description, sort_order, is_active, created_by_member_id, created_at, updated_at, archived_at
 `
 
 type UpdateRecurringQuestParams struct {
@@ -202,7 +389,6 @@ type UpdateRecurringQuestParams struct {
 	Title       string `json:"title"`
 	Description string `json:"description"`
 	SortOrder   int32  `json:"sort_order"`
-	IsActive    bool   `json:"is_active"`
 }
 
 func (q *Queries) UpdateRecurringQuest(ctx context.Context, arg UpdateRecurringQuestParams) (*RecurringQuest, error) {
@@ -212,7 +398,6 @@ func (q *Queries) UpdateRecurringQuest(ctx context.Context, arg UpdateRecurringQ
 		arg.Title,
 		arg.Description,
 		arg.SortOrder,
-		arg.IsActive,
 	)
 	var i RecurringQuest
 	err := row.Scan(
@@ -225,6 +410,7 @@ func (q *Queries) UpdateRecurringQuest(ctx context.Context, arg UpdateRecurringQ
 		&i.CreatedByMemberID,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.ArchivedAt,
 	)
 	return &i, err
 }

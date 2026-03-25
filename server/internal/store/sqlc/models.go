@@ -53,6 +53,48 @@ func (ns NullMemberRole) Value() (driver.Value, error) {
 	return string(ns.MemberRole), nil
 }
 
+type RoomVisibility string
+
+const (
+	RoomVisibilityPublic  RoomVisibility = "public"
+	RoomVisibilityPrivate RoomVisibility = "private"
+)
+
+func (e *RoomVisibility) Scan(src interface{}) error {
+	switch s := src.(type) {
+	case []byte:
+		*e = RoomVisibility(s)
+	case string:
+		*e = RoomVisibility(s)
+	default:
+		return fmt.Errorf("unsupported scan type for RoomVisibility: %T", src)
+	}
+	return nil
+}
+
+type NullRoomVisibility struct {
+	RoomVisibility RoomVisibility `json:"room_visibility"`
+	Valid          bool           `json:"valid"` // Valid is true if RoomVisibility is not NULL
+}
+
+// Scan implements the Scanner interface.
+func (ns *NullRoomVisibility) Scan(value interface{}) error {
+	if value == nil {
+		ns.RoomVisibility, ns.Valid = "", false
+		return nil
+	}
+	ns.Valid = true
+	return ns.RoomVisibility.Scan(value)
+}
+
+// Value implements the driver Valuer interface.
+func (ns NullRoomVisibility) Value() (driver.Value, error) {
+	if !ns.Valid {
+		return nil, nil
+	}
+	return string(ns.RoomVisibility), nil
+}
+
 type Completion struct {
 	MemberID    string             `json:"member_id"`
 	QuestID     string             `json:"quest_id"`
@@ -70,6 +112,7 @@ type Member struct {
 	Role      MemberRole         `json:"role"`
 	JoinedAt  pgtype.Timestamptz `json:"joined_at"`
 	UpdatedAt pgtype.Timestamptz `json:"updated_at"`
+	RemovedAt pgtype.Timestamptz `json:"removed_at"`
 }
 
 type RecurringQuest struct {
@@ -82,6 +125,19 @@ type RecurringQuest struct {
 	CreatedByMemberID string             `json:"created_by_member_id"`
 	CreatedAt         pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt         pgtype.Timestamptz `json:"updated_at"`
+	ArchivedAt        pgtype.Timestamptz `json:"archived_at"`
+}
+
+type RecurringQuestVersion struct {
+	ID          int64              `json:"id"`
+	QuestID     string             `json:"quest_id"`
+	RoomID      string             `json:"room_id"`
+	Title       string             `json:"title"`
+	Description string             `json:"description"`
+	SortOrder   int32              `json:"sort_order"`
+	StartedAt   pgtype.Timestamptz `json:"started_at"`
+	EndedAt     pgtype.Timestamptz `json:"ended_at"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
 }
 
 type Room struct {
@@ -94,6 +150,16 @@ type Room struct {
 	UpdatedAt              pgtype.Timestamptz `json:"updated_at"`
 	FinalGoalDate          pgtype.Date        `json:"final_goal_date"`
 	DailyGoalCutoffPercent int32              `json:"daily_goal_cutoff_percent"`
+	Visibility             RoomVisibility     `json:"visibility"`
+}
+
+type RoomDailyGoalCutoffRevision struct {
+	ID            int64              `json:"id"`
+	RoomID        string             `json:"room_id"`
+	CutoffPercent int32              `json:"cutoff_percent"`
+	StartedAt     pgtype.Timestamptz `json:"started_at"`
+	EndedAt       pgtype.Timestamptz `json:"ended_at"`
+	CreatedAt     pgtype.Timestamptz `json:"created_at"`
 }
 
 type Session struct {

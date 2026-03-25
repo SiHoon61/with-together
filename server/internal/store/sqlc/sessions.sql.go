@@ -105,6 +105,7 @@ JOIN rooms r
 WHERE s.session_token_hash = $1
   AND s.revoked_at IS NULL
   AND s.expires_at > NOW()
+  AND m.removed_at IS NULL
 LIMIT 1
 `
 

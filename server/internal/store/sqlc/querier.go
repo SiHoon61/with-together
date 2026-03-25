@@ -11,14 +11,18 @@ import (
 )
 
 type Querier interface {
+	ArchiveRecurringQuest(ctx context.Context, arg ArchiveRecurringQuestParams) (*RecurringQuest, error)
+	CloseCurrentRecurringQuestVersion(ctx context.Context, arg CloseCurrentRecurringQuestVersionParams) error
+	CloseCurrentRoomDailyGoalCutoffRevision(ctx context.Context, arg CloseCurrentRoomDailyGoalCutoffRevisionParams) error
 	CountMembersByRoomID(ctx context.Context, roomID string) (int32, error)
 	CreateMember(ctx context.Context, arg CreateMemberParams) (*Member, error)
 	CreateRecurringQuest(ctx context.Context, arg CreateRecurringQuestParams) (*RecurringQuest, error)
+	CreateRecurringQuestVersion(ctx context.Context, arg CreateRecurringQuestVersionParams) (*RecurringQuestVersion, error)
 	CreateRoom(ctx context.Context, arg CreateRoomParams) (*Room, error)
+	CreateRoomDailyGoalCutoffRevision(ctx context.Context, arg CreateRoomDailyGoalCutoffRevisionParams) (*RoomDailyGoalCutoffRevision, error)
 	CreateSession(ctx context.Context, arg CreateSessionParams) (*Session, error)
 	DeleteCompletion(ctx context.Context, arg DeleteCompletionParams) (int64, error)
 	DeleteExpiredSessions(ctx context.Context, expiresAt pgtype.Timestamptz) (int64, error)
-	DeleteMemberByRoomAndID(ctx context.Context, arg DeleteMemberByRoomAndIDParams) error
 	GetActiveSessionAuthContextByTokenHash(ctx context.Context, sessionTokenHash string) (*GetActiveSessionAuthContextByTokenHashRow, error)
 	GetActiveSessionByTokenHash(ctx context.Context, sessionTokenHash string) (*Session, error)
 	GetCompletion(ctx context.Context, arg GetCompletionParams) (*Completion, error)
@@ -30,6 +34,7 @@ type Querier interface {
 	GetRecurringQuestByID(ctx context.Context, arg GetRecurringQuestByIDParams) (*RecurringQuest, error)
 	GetRoomByID(ctx context.Context, id string) (*Room, error)
 	GetRoomByInviteToken(ctx context.Context, inviteToken string) (*Room, error)
+	GetRoomDailyGoalCutoffAtTimestamp(ctx context.Context, arg GetRoomDailyGoalCutoffAtTimestampParams) (int32, error)
 	GetRoomSummaryByID(ctx context.Context, id string) (*GetRoomSummaryByIDRow, error)
 	GetRoomSummaryByInviteToken(ctx context.Context, inviteToken string) (*GetRoomSummaryByInviteTokenRow, error)
 	GetSessionByTokenHash(ctx context.Context, sessionTokenHash string) (*Session, error)
@@ -37,8 +42,11 @@ type Querier interface {
 	ListCompletionsByRoomAndDate(ctx context.Context, arg ListCompletionsByRoomAndDateParams) ([]*Completion, error)
 	ListCompletionsByRoomAndDateRange(ctx context.Context, arg ListCompletionsByRoomAndDateRangeParams) ([]*Completion, error)
 	ListMembersByRoomID(ctx context.Context, roomID string) ([]*Member, error)
+	ListMembersByRoomIDAtTimestamp(ctx context.Context, arg ListMembersByRoomIDAtTimestampParams) ([]*Member, error)
 	ListRecurringQuestsByRoomID(ctx context.Context, roomID string) ([]*RecurringQuest, error)
+	ListRecurringQuestsByRoomIDAtTimestamp(ctx context.Context, arg ListRecurringQuestsByRoomIDAtTimestampParams) ([]*ListRecurringQuestsByRoomIDAtTimestampRow, error)
 	ListRoomSummaries(ctx context.Context) ([]*ListRoomSummariesRow, error)
+	RemoveMemberByRoomAndID(ctx context.Context, arg RemoveMemberByRoomAndIDParams) (*Member, error)
 	RevokeSessionByTokenHash(ctx context.Context, arg RevokeSessionByTokenHashParams) error
 	RevokeSessionsByMemberID(ctx context.Context, arg RevokeSessionsByMemberIDParams) error
 	RotateInviteToken(ctx context.Context, arg RotateInviteTokenParams) (*Room, error)

@@ -115,6 +115,7 @@ func (h *Handler) CreateRoom(w http.ResponseWriter, r *http.Request) {
 		LeaderNickname: strings.TrimSpace(req.LeaderNickname),
 		FinalGoal:      strings.TrimSpace(req.FinalGoal),
 		FinalGoalDate:  req.FinalGoalDate.Time,
+		Visibility:     string(req.Visibility),
 		Timezone:       strings.TrimSpace(req.Timezone),
 	})
 	if err != nil {
@@ -206,6 +207,7 @@ func (h *Handler) UpdateRoom(w http.ResponseWriter, r *http.Request, roomId stri
 		FinalGoal:              req.FinalGoal,
 		FinalGoalDate:          optionalDate(req.FinalGoalDate),
 		DailyGoalCutoffPercent: req.DailyGoalCutoffPercent,
+		Visibility:             optionalRoomVisibility(req.Visibility),
 	})
 	if err != nil {
 		h.writeError(w, err)
@@ -274,6 +276,15 @@ func optionalDate(value *openapi_types.Date) *time.Time {
 	return &result
 }
 
+func optionalRoomVisibility(value *api.RoomVisibility) *string {
+	if value == nil {
+		return nil
+	}
+
+	result := string(*value)
+	return &result
+}
+
 func (h *Handler) GetRoomDailyStatus(w http.ResponseWriter, r *http.Request, roomId string, date openapi_types.Date) {
 	auth, err := h.authenticate(r)
 	if err != nil {
@@ -292,6 +303,11 @@ func (h *Handler) GetRoomDailyStatus(w http.ResponseWriter, r *http.Request, roo
 		quests = append(quests, toAPIRecurringQuest(quest))
 	}
 
+	members := make([]api.Member, 0, len(result.Members))
+	for _, member := range result.Members {
+		members = append(members, toAPIMember(member))
+	}
+
 	completions := make([]api.Completion, 0, len(result.Completions))
 	for _, completion := range result.Completions {
 		completions = append(completions, toAPICompletion(completion))
@@ -306,6 +322,7 @@ func (h *Handler) GetRoomDailyStatus(w http.ResponseWriter, r *http.Request, roo
 		Data: api.RoomDailyStatusData{
 			RoomId:          result.RoomID,
 			Date:            openapi_types.Date{Time: result.Date},
+			Members:         members,
 			RecurringQuests: quests,
 			Completions:     completions,
 			MemberStatuses:  memberStatuses,
@@ -419,7 +436,6 @@ func (h *Handler) UpdateRecurringQuest(w http.ResponseWriter, r *http.Request, r
 		Title:       req.Title,
 		Description: req.Description,
 		SortOrder:   req.SortOrder,
-		IsActive:    req.IsActive,
 	})
 	if err != nil {
 		h.writeError(w, err)
@@ -431,6 +447,21 @@ func (h *Handler) UpdateRecurringQuest(w http.ResponseWriter, r *http.Request, r
 			RecurringQuest: toAPIRecurringQuest(result),
 		},
 	})
+}
+
+func (h *Handler) DeleteRecurringQuest(w http.ResponseWriter, r *http.Request, roomId string, questId string) {
+	auth, err := h.authenticate(r)
+	if err != nil {
+		h.writeError(w, err)
+		return
+	}
+
+	if err := h.service.DeleteRecurringQuest(r.Context(), auth, roomId, questId); err != nil {
+		h.writeError(w, err)
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (h *Handler) DeleteMyQuestCompletion(w http.ResponseWriter, r *http.Request, roomId string, questId string, date openapi_types.Date) {
