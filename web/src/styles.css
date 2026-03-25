@@ -1021,6 +1021,7 @@ body {
   flex-direction: column;
   gap: 6px;
   margin-bottom: 14px;
+  min-width: 0;
 }
 .input-lbl {
   font-family: var(--font-title);
@@ -1040,6 +1041,14 @@ body {
   outline: none;
   transition: border-color 0.15s;
   width: 100%;
+  max-width: 100%;
+  min-width: 0;
+}
+.text-input[type="date"] {
+  display: block;
+  appearance: none;
+  -webkit-appearance: none;
+  min-width: 0;
 }
 .text-input:focus {
   border-color: var(--ink);
