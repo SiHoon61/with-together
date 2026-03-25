@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { Check } from "lucide-react";
+import { Check, Pencil, Trash2, X } from "lucide-react";
 import GlobalTopBar from "../components/GlobalTopBar";
 import LocalSegmentTabs from "../components/LocalSegmentTabs";
 import RoomHeader from "../components/RoomHeader";
@@ -9,7 +9,13 @@ import { useAuth } from "../context/AuthContext";
 import { useDashboard } from "../hooks/useDashboard";
 import { useCompletion } from "../hooks/useCompletion";
 import { useHorizontalSwipe } from "../hooks/useHorizontalSwipe";
-import { createRecurringQuest, kickRoomMember, updateRoom } from "../lib/api";
+import {
+  createRecurringQuest,
+  deleteRecurringQuest,
+  kickRoomMember,
+  updateRecurringQuest,
+  updateRoom,
+} from "../lib/api";
 import { monthlyRoomStatusQueryOptions } from "../lib/queryOptions";
 
 function memberStatusLabel(status) {
@@ -38,15 +44,23 @@ export default function Dashboard({ roomId, onNavigate }) {
   const { data, loading, error, refetch } = useDashboard(roomId);
   const [shareState, setShareState] = useState("idle");
   const [showCreateQuest, setShowCreateQuest] = useState(false);
+  const [editingQuestId, setEditingQuestId] = useState(null);
   const [questTitle, setQuestTitle] = useState("");
   const [questDescription, setQuestDescription] = useState("");
   const [createLoading, setCreateLoading] = useState(false);
   const [createError, setCreateError] = useState(null);
   const [selectedMemberId, setSelectedMemberId] = useState(null);
   const [showGoalSettings, setShowGoalSettings] = useState(false);
+  const [showRoomSettings, setShowRoomSettings] = useState(false);
   const [cutoffDraft, setCutoffDraft] = useState(50);
   const [cutoffSaving, setCutoffSaving] = useState(false);
   const [cutoffError, setCutoffError] = useState(null);
+  const [roomNameDraft, setRoomNameDraft] = useState("");
+  const [finalGoalDraft, setFinalGoalDraft] = useState("");
+  const [finalGoalDateDraft, setFinalGoalDateDraft] = useState("");
+  const [visibilityDraft, setVisibilityDraft] = useState("public");
+  const [roomSettingsSaving, setRoomSettingsSaving] = useState(false);
+  const [roomSettingsError, setRoomSettingsError] = useState(null);
   const [kickLoading, setKickLoading] = useState(false);
   const [kickError, setKickError] = useState(null);
   const swipeHandlers = useHorizontalSwipe({
@@ -54,7 +68,7 @@ export default function Dashboard({ roomId, onNavigate }) {
   });
 
   const todayDate = data?.todayDate ?? new Date().toISOString().slice(0, 10);
-  const { completedIds, toggle } = useCompletion(
+  const { completedIds, toggle, pendingQuestId } = useCompletion(
     roomId,
     todayDate,
     data?.todayCompletions ?? [],
@@ -84,6 +98,19 @@ export default function Dashboard({ roomId, onNavigate }) {
       setCutoffDraft(data.room.dailyGoalCutoffPercent);
     }
   }, [data?.room?.dailyGoalCutoffPercent]);
+
+  useEffect(() => {
+    if (data?.room?.visibility) {
+      setVisibilityDraft(data.room.visibility);
+    }
+  }, [data?.room?.visibility]);
+
+  useEffect(() => {
+    if (!data?.room) return;
+    setRoomNameDraft(data.room.name ?? "");
+    setFinalGoalDraft(data.room.finalGoal ?? "");
+    setFinalGoalDateDraft(data.room.finalGoalDate ?? "");
+  }, [data?.room]);
 
   useEffect(() => {
     setKickError(null);
@@ -127,18 +154,11 @@ export default function Dashboard({ roomId, onNavigate }) {
   const isLeader = room.leaderMemberId === currentMember.id;
   const activeQuests = recurringQuests.filter((quest) => quest.isActive);
   const cutoffPercent = room.dailyGoalCutoffPercent ?? 50;
-  const baseTodayCompletions = data.todayCompletions ?? [];
-  const optimisticTodayCompletions = [
-    ...baseTodayCompletions.filter(
-      (completion) => completion.memberId !== currentMember.id,
-    ),
-    ...Array.from(completedIds).map((questId) => ({
-      memberId: currentMember.id,
-      questId,
-      date: todayDate,
-    })),
-  ];
-  const optimisticCurrentMemberStatus = {
+  const todayCompletions = data.todayCompletions ?? [];
+  const todayMemberStatuses = data.todayMemberStatuses ?? [];
+  const currentMemberStatus = todayMemberStatuses.find(
+    (status) => status.memberId === currentMember.id,
+  ) ?? {
     memberId: currentMember.id,
     date: todayDate,
     status: dailyGoalStatus(
@@ -150,24 +170,32 @@ export default function Dashboard({ roomId, onNavigate }) {
     requiredQuestCount: requiredQuestCount(activeQuests.length, cutoffPercent),
     totalActiveQuestCount: activeQuests.length,
   };
-  const optimisticTodayMemberStatuses = [
-    ...(data.todayMemberStatuses ?? []).filter(
-      (status) => status.memberId !== currentMember.id,
-    ),
-    optimisticCurrentMemberStatus,
-  ];
   const selectedMember =
     members.find((member) => member.id === selectedMemberId) ?? null;
   const selectedMemberStatus =
-    optimisticTodayMemberStatuses.find(
+    todayMemberStatuses.find(
       (status) => status.memberId === selectedMemberId,
     ) ?? null;
   const totalMembers = members.length;
-  const requiredCount = optimisticCurrentMemberStatus.requiredQuestCount;
+  const requiredCount = currentMemberStatus.requiredQuestCount;
   const remainingForGoal = Math.max(0, requiredCount - completedIds.size);
 
+  async function refreshRoomData() {
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: ["roomDashboard", roomId] }),
+      queryClient.invalidateQueries({ queryKey: ["dailyRoomStatus", roomId] }),
+      queryClient.invalidateQueries({
+        queryKey: ["monthlyRoomStatus", roomId],
+      }),
+      queryClient.invalidateQueries({
+        queryKey: ["monthlyCompletions", roomId],
+      }),
+    ]);
+    await refetch();
+  }
+
   function membersCompletedCount(questId) {
-    return optimisticTodayCompletions.filter(
+    return todayCompletions.filter(
       (completion) => completion.questId === questId,
     ).length;
   }
@@ -246,14 +274,57 @@ export default function Dashboard({ roomId, onNavigate }) {
     try {
       setCreateLoading(true);
       setCreateError(null);
-      await createRecurringQuest(roomId, {
-        title: questTitle.trim(),
-        description: questDescription.trim(),
-      });
+      if (editingQuestId) {
+        await updateRecurringQuest(roomId, editingQuestId, {
+          title: questTitle.trim(),
+          description: questDescription.trim(),
+        });
+      } else {
+        await createRecurringQuest(roomId, {
+          title: questTitle.trim(),
+          description: questDescription.trim(),
+        });
+      }
       setQuestTitle("");
       setQuestDescription("");
       setShowCreateQuest(false);
-      await refetch();
+      setEditingQuestId(null);
+      await refreshRoomData();
+    } catch (e) {
+      setCreateError(e);
+    } finally {
+      setCreateLoading(false);
+    }
+  }
+
+  function handleStartEditQuest(quest) {
+    setEditingQuestId(quest.id);
+    setQuestTitle(quest.title);
+    setQuestDescription(quest.description ?? "");
+    setShowCreateQuest(true);
+    setCreateError(null);
+  }
+
+  function resetQuestForm() {
+    setEditingQuestId(null);
+    setQuestTitle("");
+    setQuestDescription("");
+    setCreateError(null);
+    setShowCreateQuest(false);
+  }
+
+  async function handleDeleteQuest(quest) {
+    const confirmed = window.confirm(`"${quest.title}" 미션을 삭제할까요?`);
+    if (!confirmed) return;
+
+    try {
+      setCreateLoading(true);
+      setCreateError(null);
+      await deleteRecurringQuest(roomId, quest.id);
+      if (editingQuestId === quest.id) {
+        resetQuestForm();
+      }
+      await refreshRoomData();
     } catch (e) {
       setCreateError(e);
     } finally {
@@ -282,19 +353,7 @@ export default function Dashboard({ roomId, onNavigate }) {
       setKickError(null);
       await kickRoomMember(roomId, selectedMember.id);
       setSelectedMemberId(null);
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ["roomDashboard", roomId] }),
-        queryClient.invalidateQueries({
-          queryKey: ["dailyRoomStatus", roomId],
-        }),
-        queryClient.invalidateQueries({
-          queryKey: ["monthlyRoomStatus", roomId],
-        }),
-        queryClient.invalidateQueries({
-          queryKey: ["monthlyCompletions", roomId],
-        }),
-      ]);
-      await refetch();
+      await refreshRoomData();
     } catch (e) {
       setKickError(e);
     } finally {
@@ -313,13 +372,7 @@ export default function Dashboard({ roomId, onNavigate }) {
       setCutoffSaving(true);
       setCutoffError(null);
       await updateRoom(roomId, { dailyGoalCutoffPercent: nextValue });
-      await queryClient.invalidateQueries({
-        queryKey: ["roomDashboard", roomId],
-      });
-      await queryClient.invalidateQueries({
-        queryKey: ["monthlyRoomStatus", roomId],
-      });
-      await refetch();
+      await refreshRoomData();
       setShowGoalSettings(false);
     } catch (e) {
       setCutoffError(e);
@@ -329,10 +382,38 @@ export default function Dashboard({ roomId, onNavigate }) {
   }
 
   const selectedMemberCompletionIds = new Set(
-    optimisticTodayCompletions
+    todayCompletions
       .filter((completion) => completion.memberId === selectedMemberId)
       .map((completion) => completion.questId),
   );
+
+  async function handleSaveRoomSettings() {
+    if (
+      !roomNameDraft.trim() ||
+      !finalGoalDraft.trim() ||
+      !finalGoalDateDraft
+    ) {
+      setRoomSettingsError(new Error("모든 항목을 입력해 주세요."));
+      return;
+    }
+
+    try {
+      setRoomSettingsSaving(true);
+      setRoomSettingsError(null);
+      await updateRoom(roomId, {
+        roomName: roomNameDraft.trim(),
+        finalGoal: finalGoalDraft.trim(),
+        finalGoalDate: finalGoalDateDraft,
+        visibility: visibilityDraft,
+      });
+      await refreshRoomData();
+      setShowRoomSettings(false);
+    } catch (e) {
+      setRoomSettingsError(e);
+    } finally {
+      setRoomSettingsSaving(false);
+    }
+  }
 
   return (
     <div className="page-shell" {...swipeHandlers}>
@@ -352,7 +433,105 @@ export default function Dashboard({ roomId, onNavigate }) {
           todayDate={todayDate}
           onCopyLink={handleCopyInvite}
           shareState={shareState}
+          isLeader={isLeader}
+          onOpenSettings={() => {
+            setRoomSettingsError(null);
+            setShowRoomSettings(true);
+          }}
         />
+
+        {isLeader && showRoomSettings && (
+          <div className="sheet-backdrop" onClick={() => setShowRoomSettings(false)}>
+            <div
+              className="settings-sheet"
+              onClick={(event) => event.stopPropagation()}
+            >
+              <div className="settings-sheet-header">
+                <div>
+                  <div className="settings-sheet-title">방 설정</div>
+                  <div className="settings-sheet-sub">
+                    방 정보와 공개 여부를 바꿀 수 있어요.
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  className="settings-sheet-close"
+                  onClick={() => setShowRoomSettings(false)}
+                  aria-label="설정 닫기"
+                >
+                  <X size={18} />
+                </button>
+              </div>
+
+              <div className="leader-form">
+                <div className="input-group">
+                  <div className="input-lbl">방 이름</div>
+                  <input
+                    className="text-input"
+                    type="text"
+                    maxLength={40}
+                    value={roomNameDraft}
+                    onChange={(e) => setRoomNameDraft(e.target.value)}
+                  />
+                </div>
+
+                <div className="input-group">
+                  <div className="input-lbl">최종 목표 설명</div>
+                  <textarea
+                    className="text-input text-area text-area-sm"
+                    rows={3}
+                    maxLength={120}
+                    value={finalGoalDraft}
+                    onChange={(e) => setFinalGoalDraft(e.target.value)}
+                  />
+                </div>
+
+                <div className="input-group">
+                  <div className="input-lbl">목표 마감일</div>
+                  <input
+                    className="text-input"
+                    type="date"
+                    value={finalGoalDateDraft}
+                    onChange={(e) => setFinalGoalDateDraft(e.target.value)}
+                  />
+                </div>
+
+                <div className="input-group">
+                  <div className="input-lbl">방 공개 여부</div>
+                  <div className="visibility-segment">
+                    <button
+                      type="button"
+                      className={`visibility-segment-btn ${visibilityDraft === "public" ? "active" : ""}`}
+                      onClick={() => setVisibilityDraft("public")}
+                    >
+                      공개방
+                    </button>
+                    <button
+                      type="button"
+                      className={`visibility-segment-btn ${visibilityDraft === "private" ? "active" : ""}`}
+                      onClick={() => setVisibilityDraft("private")}
+                    >
+                      비밀방
+                    </button>
+                  </div>
+                </div>
+
+                {roomSettingsError && (
+                  <div className="error-msg">{roomSettingsError.message}</div>
+                )}
+
+                <button
+                  className="btn-primary"
+                  type="button"
+                  disabled={roomSettingsSaving}
+                  onClick={handleSaveRoomSettings}
+                >
+                  {roomSettingsSaving ? "저장 중..." : "방 설정 저장"}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
 
         <div className="goal-progress-card">
           <div className="goal-progress-label">오늘의 목표 </div>
@@ -360,9 +539,9 @@ export default function Dashboard({ roomId, onNavigate }) {
             <div className="goal-progress-value">
               아직 설정된 반복 미션이 없어요
             </div>
-          ) : optimisticCurrentMemberStatus.status === "perfect" ? (
+          ) : currentMemberStatus.status === "perfect" ? (
             <div className="goal-progress-value">목표를 모두 완료했어요!</div>
-          ) : optimisticCurrentMemberStatus.status === "goal_met" ? (
+          ) : currentMemberStatus.status === "goal_met" ? (
             <div className="goal-progress-value">일일 목표를 달성했어요</div>
           ) : (
             <div className="goal-progress-value">
@@ -397,7 +576,7 @@ export default function Dashboard({ roomId, onNavigate }) {
           <div className="leader-action-card">
             <div className="leader-form leader-form-inline">
               <div className="input-group">
-                <div className="input-lbl">goal_met 기준 퍼센트</div>
+                <div className="input-lbl">목표 달성 기준 퍼센트</div>
                 <input
                   className="text-input"
                   type="number"
@@ -432,8 +611,15 @@ export default function Dashboard({ roomId, onNavigate }) {
               className="leader-action-btn"
               type="button"
               onClick={() => {
-                setShowCreateQuest((prev) => !prev);
+                if (showCreateQuest) {
+                  resetQuestForm();
+                  return;
+                }
+                setEditingQuestId(null);
+                setQuestTitle("");
+                setQuestDescription("");
                 setCreateError(null);
+                setShowCreateQuest(true);
               }}
             >
               {showCreateQuest ? "반복 미션 입력 닫기" : "반복 미션 만들기"}
@@ -479,7 +665,13 @@ export default function Dashboard({ roomId, onNavigate }) {
                   }
                   onClick={handleCreateQuest}
                 >
-                  {createLoading ? "추가하는 중..." : "반복 미션 추가하기"}
+                  {createLoading
+                    ? editingQuestId
+                      ? "저장하는 중..."
+                      : "추가하는 중..."
+                    : editingQuestId
+                      ? "반복 미션 저장하기"
+                      : "반복 미션 추가하기"}
                 </button>
               </div>
             )}
@@ -493,8 +685,12 @@ export default function Dashboard({ roomId, onNavigate }) {
           return (
             <div
               key={quest.id}
-              className={`quest-card ${checked ? "checked" : ""}`}
-              onClick={() => toggle(quest.id)}
+              className={`quest-card ${checked ? "checked" : ""} ${pendingQuestId === quest.id ? "pending" : ""}`}
+              onClick={() => {
+                if (!pendingQuestId) {
+                  toggle(quest.id);
+                }
+              }}
             >
               <div className="quest-checkbox">
                 <Check className="check-svg" size={13} strokeWidth={2.4} />
@@ -507,9 +703,31 @@ export default function Dashboard({ roomId, onNavigate }) {
                     : quest.description || "아직 완료하지 않았어요"}
                 </div>
               </div>
-              <div className="quest-count">
-                {doneCount}/{totalMembers}
-              </div>
+              {isLeader && (
+                <div
+                  className="quest-actions"
+                  onClick={(event) => event.stopPropagation()}
+                >
+                  <button
+                    type="button"
+                    className="quest-action-btn"
+                    onClick={() => handleStartEditQuest(quest)}
+                    aria-label="반복 미션 수정"
+                    title="반복 미션 수정"
+                  >
+                    <Pencil size={14} />
+                  </button>
+                  <button
+                    type="button"
+                    className="quest-action-btn danger"
+                    onClick={() => handleDeleteQuest(quest)}
+                    aria-label="반복 미션 삭제"
+                    title="반복 미션 삭제"
+                  >
+                    <Trash2 size={14} />
+                  </button>
+                </div>
+              )}
             </div>
           );
         })}
@@ -523,8 +741,8 @@ export default function Dashboard({ roomId, onNavigate }) {
           members={members}
           currentMemberId={currentMember.id}
           activeQuestCount={activeQuests.length}
-          todayCompletions={optimisticTodayCompletions}
-          memberStatuses={optimisticTodayMemberStatuses}
+          todayCompletions={todayCompletions}
+          memberStatuses={todayMemberStatuses}
           selectedMemberId={selectedMemberId}
           onSelectMember={(member) => {
             if (member.id === currentMember.id) {
@@ -587,7 +805,7 @@ export default function Dashboard({ roomId, onNavigate }) {
                   disabled={kickLoading}
                   onClick={handleKickMember}
                 >
-                  {kickLoading ? "강퇴하는 중..." : "이 멤버 강퇴하기"}
+                  {kickLoading ? "내보내는 중..." : "이 멤버 내보내기"}
                 </button>
               </div>
             )}

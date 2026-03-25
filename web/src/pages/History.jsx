@@ -101,11 +101,13 @@ export default function History({ roomId, onNavigate }) {
   }
 
   const selectedStatusData = dailyStatusQuery.data ?? {
+    members: dashData?.members ?? [],
     recurringQuests: dashData?.recurringQuests ?? [],
     completions: dashData?.todayCompletions ?? [],
     memberStatuses: dashData?.todayMemberStatuses ?? [],
   };
   const memberStatuses = selectedStatusData.memberStatuses ?? [];
+  const selectedMembers = selectedStatusData.members ?? [];
   const totalMembers = memberStatuses.length;
   const passedMembers = memberStatuses.filter(
     (memberStatus) =>
@@ -117,7 +119,7 @@ export default function History({ roomId, onNavigate }) {
     (quest) => quest.isActive,
   );
   const selectedMember =
-    dashData?.members.find((member) => member.id === selectedMemberId) ?? null;
+    selectedMembers.find((member) => member.id === selectedMemberId) ?? null;
   const selectedMemberStatus =
     memberStatuses.find((status) => status.memberId === selectedMemberId) ??
     null;
@@ -247,12 +249,12 @@ export default function History({ roomId, onNavigate }) {
           <>
             <div className="member-strip-header">
               <div className="section-label">멤버 현황</div>
-              <div className="member-strip-total">
-                총 {dashData.members.length}명
+                <div className="member-strip-total">
+                총 {selectedMembers.length}명
               </div>
             </div>
             <MemberStatusStrip
-              members={dashData.members}
+              members={selectedMembers}
               currentMemberId={dashData.currentMember.id}
               activeQuestCount={activeQuests.length || totalQuests}
               todayCompletions={selectedStatusData.completions}

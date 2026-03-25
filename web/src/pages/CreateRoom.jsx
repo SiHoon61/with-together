@@ -29,6 +29,7 @@ export default function CreateRoom({ onNavigate }) {
   const [leaderNickname, setLeaderNickname] = useState("");
   const [finalGoal, setFinalGoal] = useState("");
   const [finalGoalDate, setFinalGoalDate] = useState(getDefaultGoalDate);
+  const [visibility, setVisibility] = useState("public");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [created, setCreated] = useState(null);
@@ -51,6 +52,7 @@ export default function CreateRoom({ onNavigate }) {
         leaderNickname: leaderNickname.trim(),
         finalGoal: finalGoal.trim(),
         finalGoalDate,
+        visibility,
         timezone,
       });
 
@@ -107,6 +109,12 @@ export default function CreateRoom({ onNavigate }) {
             <div className="create-meta-label">목표 마감일</div>
             <div className="create-meta-value">
               {created.room.finalGoalDate}
+            </div>
+          </div>
+          <div className="create-meta">
+            <div className="create-meta-label">방 공개 여부</div>
+            <div className="create-meta-value">
+              {created.room.visibility === "private" ? "비밀방" : "공개방"}
             </div>
           </div>
           <div className="create-meta">
@@ -199,6 +207,26 @@ export default function CreateRoom({ onNavigate }) {
           value={finalGoalDate}
           onChange={(e) => setFinalGoalDate(e.target.value)}
         />
+      </div>
+
+      <div className="input-group">
+        <div className="input-lbl">방 공개 여부</div>
+        <div className="visibility-segment">
+          <button
+            type="button"
+            className={`visibility-segment-btn ${visibility === "public" ? "active" : ""}`}
+            onClick={() => setVisibility("public")}
+          >
+            공개방
+          </button>
+          <button
+            type="button"
+            className={`visibility-segment-btn ${visibility === "private" ? "active" : ""}`}
+            onClick={() => setVisibility("private")}
+          >
+            비밀방
+          </button>
+        </div>
       </div>
 
       <div className="create-timezone">

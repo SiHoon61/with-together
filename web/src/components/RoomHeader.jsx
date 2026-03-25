@@ -1,9 +1,13 @@
+import { Settings2 } from "lucide-react";
+
 export default function RoomHeader({
   room,
   todayDate,
   onShare,
   onCopyLink,
   shareState,
+  isLeader,
+  onOpenSettings,
 }) {
   if (!room) return null;
   const today = new Date(todayDate);
@@ -50,6 +54,18 @@ export default function RoomHeader({
       <div className="room-name">{room.name}</div>
       <div className="room-goal">{room.finalGoal}</div>
       <div className="room-goal-date">목표 마감일 · {room.finalGoalDate}</div>
+
+      {isLeader && (
+        <button
+          className="room-settings-btn"
+          type="button"
+          onClick={onOpenSettings}
+          aria-label="방 설정 열기"
+          title="방 설정"
+        >
+          <Settings2 size={16} />
+        </button>
+      )}
     </div>
   );
 }

@@ -1,40 +1,23 @@
-import { useState, useCallback, useEffect } from 'react'
+import { useMemo, useState, useCallback } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { putCompletion, deleteCompletion } from '../lib/api'
 
-/**
- * 퀘스트 완료 토글 훅 (낙관적 업데이트)
- * initialCompletions : Completion[]  (todayCompletions from dashboard)
- */
 export function useCompletion(roomId, date, initialCompletions, currentMemberId) {
   const queryClient = useQueryClient()
+  const [pendingQuestId, setPendingQuestId] = useState(null)
 
-  function buildCompletedSet(completions, memberId) {
-    const mine = (completions ?? []).filter(c => c.memberId === memberId)
+  const completedIds = useMemo(() => {
+    const mine = (initialCompletions ?? []).filter((completion) => completion.memberId === currentMemberId)
     return new Set(mine.map(c => c.questId))
-  }
-
-  // Set<questId> — 현재 멤버가 오늘 완료한 퀘스트 ID
-  const [completedIds, setCompletedIds] = useState(() => {
-    const mine = (initialCompletions ?? []).filter(c => c.memberId === currentMemberId)
-    return new Set(mine.map(c => c.questId))
-  })
-
-  useEffect(() => {
-    setCompletedIds(buildCompletedSet(initialCompletions, currentMemberId))
-  }, [initialCompletions, currentMemberId, date])
+  }, [initialCompletions, currentMemberId])
 
   const toggle = useCallback(async (questId) => {
+    if (pendingQuestId) return
+
     const wasChecked = completedIds.has(questId)
 
-    // 낙관적 업데이트
-    setCompletedIds(prev => {
-      const next = new Set(prev)
-      wasChecked ? next.delete(questId) : next.add(questId)
-      return next
-    })
-
     try {
+      setPendingQuestId(questId)
       if (wasChecked) {
         await deleteCompletion(roomId, questId, date)
       } else {
@@ -48,15 +31,11 @@ export function useCompletion(roomId, date, initialCompletions, currentMemberId)
         queryClient.invalidateQueries({ queryKey: ['monthlyCompletions', roomId] }),
       ])
     } catch (e) {
-      // 실패 시 롤백
-      setCompletedIds(prev => {
-        const next = new Set(prev)
-        wasChecked ? next.add(questId) : next.delete(questId)
-        return next
-      })
       console.error('completion toggle failed', e)
+    } finally {
+      setPendingQuestId(null)
     }
-  }, [roomId, date, completedIds, queryClient])
+  }, [roomId, date, completedIds, pendingQuestId, queryClient])
 
-  return { completedIds, toggle }
+  return { completedIds, toggle, pendingQuestId }
 }

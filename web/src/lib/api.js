@@ -105,8 +105,8 @@ export function listRooms() {
 }
 
 /** POST /v1/rooms → CreateRoomData */
-export function createRoom({ roomName, leaderNickname, finalGoal, finalGoalDate, timezone }) {
-  return post('/v1/rooms', { roomName, leaderNickname, finalGoal, finalGoalDate, timezone })
+export function createRoom({ roomName, leaderNickname, finalGoal, finalGoalDate, visibility, timezone }) {
+  return post('/v1/rooms', { roomName, leaderNickname, finalGoal, finalGoalDate, visibility, timezone })
 }
 
 /** GET /v1/invites/{inviteToken} → InviteSummaryData */
@@ -146,6 +146,20 @@ export function createRecurringQuest(roomId, { title, description, sortOrder }) 
     description,
     ...(sortOrder !== undefined ? { sortOrder } : {}),
   }, { roomId })
+}
+
+/** PATCH /v1/rooms/{roomId}/recurring-quests/{questId} → RecurringQuestData */
+export function updateRecurringQuest(roomId, questId, { title, description, sortOrder }) {
+  return patch(`/v1/rooms/${roomId}/recurring-quests/${questId}`, {
+    ...(title !== undefined ? { title } : {}),
+    ...(description !== undefined ? { description } : {}),
+    ...(sortOrder !== undefined ? { sortOrder } : {}),
+  }, { roomId })
+}
+
+/** DELETE /v1/rooms/{roomId}/recurring-quests/{questId} → null */
+export function deleteRecurringQuest(roomId, questId) {
+  return del(`/v1/rooms/${roomId}/recurring-quests/${questId}`, { roomId })
 }
 
 /** GET /v1/rooms/{roomId}/daily-status/{date} → RoomDailyStatusData */

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useInviteSummary, useJoinRoom } from "../hooks/useInvite";
 import { useAuth } from "../context/AuthContext";
 import { getAvatarAppearance } from "../lib/avatar";
@@ -16,10 +16,20 @@ export default function JoinRoom({
     error: summaryError,
   } = useInviteSummary(inviteToken);
   const { join, loading: joinLoading, error: joinError } = useJoinRoom();
-  const { login } = useAuth();
+  const { login, getRoomAccess } = useAuth();
 
   const [nickname, setNickname] = useState("");
   const nicknamePreview = getAvatarAppearance(nickname, nickname);
+
+  useEffect(() => {
+    const roomId = data?.room?.id;
+    if (!roomId) return;
+
+    const roomAccess = getRoomAccess(roomId);
+    if (roomAccess?.sessionToken) {
+      onNavigate("dashboard", { roomId });
+    }
+  }, [data?.room?.id, getRoomAccess, onNavigate]);
 
   function handleJoin() {
     if (!nickname.trim()) return;
