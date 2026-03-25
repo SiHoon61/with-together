@@ -15,7 +15,10 @@
 
 - 메인 화면에서는 전체 방 목록을 조회해 보여줄 수 있다.
 - 리더가 방을 생성한다.
-- 리더가 비공개 초대 링크를 멤버에게 공유한다.
+- 방은 `공개방` 또는 `비밀방` 중 하나다.
+- 공개방은 메인 화면의 방 목록에 노출된다.
+- 비밀방은 초대 링크를 가진 사람만 입장할 수 있다.
+- 리더가 초대 링크를 멤버에게 공유한다.
 - 멤버는 별명을 입력해 최초 참가한다.
 - 서버는 현재 브라우저용 `sessionToken`을 발급한다.
 
@@ -29,6 +32,7 @@
 - `finalGoal`
 - `finalGoalDate`
 - `dailyGoalCutoffPercent`
+- `visibility`: `public` 또는 `private`
 - `inviteToken`
 - 리더 1명
 - 멤버 여러 명
@@ -38,6 +42,7 @@
 반복 퀘스트는 그 최종 목표를 향해 매일 수행하는 습관/행동 단위다.
 또한 방은 `dailyGoalCutoffPercent`를 가지며, 멤버가 하루에 몇 퍼센트 이상 반복 퀘스트를 완료해야
 그날의 목표를 달성한 것으로 볼지 결정한다.
+방은 공개 여부를 가지며, 리더는 방 생성 시점과 이후 언제든지 이를 변경할 수 있다.
 
 ### 멤버(Member)
 
@@ -66,8 +71,10 @@
 
 - 방당 여러 개를 가질 수 있다
 - 생성/수정은 리더만 가능
+- 삭제는 미래 시점에 대해서만 적용된다
 - 멤버는 퀘스트별, 날짜별로 수행 여부를 체크한다
 - 날짜마다 퀘스트 자체를 새로 만드는 구조가 아니다
+- 제목/설명/정렬 순서는 버전으로 관리되며, 히스토리 조회 시 선택한 날짜 기준의 버전이 반환된다
 
 ### 완료 기록(Completion)
 
@@ -103,6 +110,17 @@
 
 기본 커트라인은 50%이며, 리더만 수정할 수 있다.
 
+### 히스토리 일관성 규칙
+
+특정 날짜의 히스토리는 항상 `그 날짜 시점`의 방 구성을 기준으로 계산한다.
+
+- 이후에 반복 퀘스트가 추가되어도 과거 날짜의 총 미션 수는 바뀌지 않는다
+- 이후에 반복 퀘스트가 수정/삭제되어도 과거 날짜의 미션 목록과 상태는 바뀌지 않는다
+- 이후에 멤버가 새로 참가하거나 강퇴되어도 과거 날짜의 멤버 목록과 상태는 바뀌지 않는다
+- 이후에 `dailyGoalCutoffPercent`가 바뀌어도 과거 날짜의 `goal_met` 판정은 바뀌지 않는다
+
+즉 히스토리는 항상 `현재 상태`가 아니라 `선택한 날짜 시점의 상태`를 재구성해 보여준다.
+
 ## 리소스 형태
 
 ### Room
@@ -114,6 +132,7 @@
   "finalGoal": "100일 동안 매일 운동 인증하기",
   "finalGoalDate": "2026-06-30",
   "dailyGoalCutoffPercent": 50,
+  "visibility": "public",
   "inviteToken": "ivt_0sUQGqPH9k6f0QGmYk8y",
   "leaderMemberId": "mem_01HQ6A9G9D22N17H2N3QH7S1BG",
   "memberCount": 4,
@@ -221,7 +240,7 @@ Authorization: Bearer ses_6kJHf6P0g7hJ6KXvR3q2M1wL9a
 
 ## 0. 방 목록 조회
 
-로그인하지 않은 메인 화면에서 전체 방 목록을 보여줄 때 사용한다.
+로그인하지 않은 메인 화면에서 공개방 목록을 보여줄 때 사용한다.
 
 `GET /v1/rooms`
 
@@ -237,6 +256,7 @@ Authorization: Bearer ses_6kJHf6P0g7hJ6KXvR3q2M1wL9a
         "finalGoal": "100일 동안 매일 운동 인증하기",
         "finalGoalDate": "2026-06-30",
         "dailyGoalCutoffPercent": 50,
+        "visibility": "public",
         "inviteToken": "ivt_0sUQGqPH9k6f0QGmYk8y",
         "leaderMemberId": "mem_01HQ6A9G9D22N17H2N3QH7S1BG",
         "memberCount": 4,
@@ -251,6 +271,7 @@ Authorization: Bearer ses_6kJHf6P0g7hJ6KXvR3q2M1wL9a
 ### 비고
 
 - 최신 생성 순으로 정렬한다
+- `visibility = public` 인 방만 반환한다
 - 각 방 카드를 클릭하면 프론트는 `/join/{inviteToken}` 으로 이동할 수 있다
 
 ## 1. 방 생성
@@ -267,6 +288,7 @@ Authorization: Bearer ses_6kJHf6P0g7hJ6KXvR3q2M1wL9a
   "leaderNickname": "시훈",
   "finalGoal": "100일 동안 매일 운동 인증하기",
   "finalGoalDate": "2026-06-30",
+  "visibility": "public",
   "timezone": "Asia/Seoul"
 }
 ```
@@ -282,6 +304,7 @@ Authorization: Bearer ses_6kJHf6P0g7hJ6KXvR3q2M1wL9a
       "finalGoal": "100일 동안 매일 운동 인증하기",
       "finalGoalDate": "2026-06-30",
       "dailyGoalCutoffPercent": 50,
+      "visibility": "public",
       "inviteToken": "ivt_0sUQGqPH9k6f0QGmYk8y",
       "leaderMemberId": "mem_01HQ6A9G9D22N17H2N3QH7S1BG",
       "memberCount": 1,
@@ -308,6 +331,7 @@ Authorization: Bearer ses_6kJHf6P0g7hJ6KXvR3q2M1wL9a
 
 - `finalGoalDate`는 방의 마감 날짜다.
 - `dailyGoalCutoffPercent`의 기본값은 50이다.
+- `visibility`는 `public` 또는 `private` 중 하나다.
 - 방의 진행률, 남은 일수, 종료 여부는 방의 `timezone`과 `finalGoalDate`를 기준으로 계산하는 것을 권장한다.
 
 ## 2. 초대 링크 정보 조회
@@ -327,6 +351,7 @@ Authorization: Bearer ses_6kJHf6P0g7hJ6KXvR3q2M1wL9a
       "finalGoal": "100일 동안 매일 운동 인증하기",
       "finalGoalDate": "2026-06-30",
       "dailyGoalCutoffPercent": 50,
+      "visibility": "public",
       "inviteToken": "ivt_0sUQGqPH9k6f0QGmYk8y",
       "leaderMemberId": "mem_01HQ6A9G9D22N17H2N3QH7S1BG",
       "memberCount": 4,
@@ -362,6 +387,7 @@ Authorization: Bearer ses_6kJHf6P0g7hJ6KXvR3q2M1wL9a
 ### 비고
 
 - 이 엔드포인트는 초대 링크를 가진 누구나 호출할 수 있다.
+- 프론트가 이미 해당 `roomId`의 세션을 가지고 있다면 가입 화면 대신 바로 방 대시보드로 이동하는 것을 권장한다.
 
 ## 3. 초대 링크로 최초 참가
 
@@ -388,6 +414,7 @@ Authorization: Bearer ses_6kJHf6P0g7hJ6KXvR3q2M1wL9a
       "finalGoal": "100일 동안 매일 운동 인증하기",
       "finalGoalDate": "2026-06-30",
       "dailyGoalCutoffPercent": 50,
+      "visibility": "public",
       "inviteToken": "ivt_0sUQGqPH9k6f0QGmYk8y",
       "leaderMemberId": "mem_01HQ6A9G9D22N17H2N3QH7S1BG",
       "memberCount": 5,
@@ -435,6 +462,8 @@ Authorization: Bearer ses_6kJHf6P0g7hJ6KXvR3q2M1wL9a
       "name": "100일 운동방",
       "finalGoal": "100일 동안 매일 운동 인증하기",
       "finalGoalDate": "2026-06-30",
+      "dailyGoalCutoffPercent": 50,
+      "visibility": "public",
       "inviteToken": "ivt_0sUQGqPH9k6f0QGmYk8y",
       "leaderMemberId": "mem_01HQ6A9G9D22N17H2N3QH7S1BG",
       "memberCount": 5,
@@ -499,9 +528,9 @@ Authorization: Bearer ses_6kJHf6P0g7hJ6KXvR3q2M1wL9a
 }
 ```
 
-## 5. 방 이름/최종 목표/최종 목표 날짜/일일 목표 커트라인 수정
+## 5. 방 이름/최종 목표/최종 목표 날짜/일일 목표 커트라인/공개 여부 수정
 
-리더만 방 이름, 최종 목표, 최종 목표 날짜, 일일 목표 커트라인 퍼센트를 수정할 수 있다.
+리더만 방 이름, 최종 목표, 최종 목표 날짜, 일일 목표 커트라인 퍼센트, 공개 여부를 수정할 수 있다.
 
 `PATCH /v1/rooms/{roomId}`
 
@@ -517,7 +546,8 @@ Authorization: Bearer ses_6kJHf6P0g7hJ6KXvR3q2M1wL9a
   "roomName": "100일 홈트방",
   "finalGoal": "100일 동안 매일 홈트 인증하기",
   "finalGoalDate": "2026-07-31",
-  "dailyGoalCutoffPercent": 60
+  "dailyGoalCutoffPercent": 60,
+  "visibility": "private"
 }
 ```
 
@@ -532,6 +562,7 @@ Authorization: Bearer ses_6kJHf6P0g7hJ6KXvR3q2M1wL9a
       "finalGoal": "100일 동안 매일 홈트 인증하기",
       "finalGoalDate": "2026-07-31",
       "dailyGoalCutoffPercent": 60,
+      "visibility": "private",
       "inviteToken": "ivt_0sUQGqPH9k6f0QGmYk8y",
       "leaderMemberId": "mem_01HQ6A9G9D22N17H2N3QH7S1BG",
       "memberCount": 5,
@@ -564,7 +595,8 @@ Authorization: Bearer ses_6kJHf6P0g7hJ6KXvR3q2M1wL9a
 - 리더는 일반 멤버만 강퇴할 수 있다
 - 리더 자신은 강퇴할 수 없다
 - 강퇴된 멤버의 세션은 함께 무효화된다
-- 강퇴된 멤버의 완료 기록은 함께 삭제된다
+- 강퇴된 멤버의 완료 기록은 삭제되지 않는다
+- 강퇴 이후 날짜부터만 현재 멤버 목록에서 제외된다
 
 ## 6. 반복 퀘스트 생성
 
@@ -662,8 +694,7 @@ Authorization: Bearer ses_6kJHf6P0g7hJ6KXvR3q2M1wL9a
 ```json
 {
   "title": "물 2.5리터 마시기",
-  "description": "하루 동안 물 2.5리터 이상 마시고 체크하기",
-  "isActive": true
+  "description": "하루 동안 물 2.5리터 이상 마시고 체크하기"
 }
 ```
 
@@ -686,9 +717,37 @@ Authorization: Bearer ses_6kJHf6P0g7hJ6KXvR3q2M1wL9a
 }
 ```
 
+### 비고
+
+- 수정 내용은 이후 날짜부터 적용된다
+- 과거 히스토리 조회에서는 해당 날짜 시점의 퀘스트 제목/설명/정렬 순서를 반환한다
+- `isActive`를 직접 수정하는 대신 삭제 API로 미래 시점부터 제외한다
+
+## 8-1. 반복 퀘스트 삭제
+
+리더가 특정 반복 퀘스트를 삭제한다.
+
+`DELETE /v1/rooms/{roomId}/recurring-quests/{questId}`
+
+### 인증
+
+- 필요
+- 리더만 가능
+
+### 응답 `204 No Content`
+
+응답 바디 없음.
+
+### 비고
+
+- 삭제는 미래 날짜에 대해서만 적용된다
+- 과거 히스토리 조회에서는 해당 날짜에 유효했던 미션으로 계속 계산된다
+
 ## 9. 날짜별 수행 기록 조회
 
 히스토리 화면이나 캘린더 화면에서 사용한다.
+
+과거 날짜의 결과는 항상 `그 날짜 시점`의 미션 수, 멤버 수, 커트라인 기준으로 계산한다.
 
 `GET /v1/rooms/{roomId}/completions?from=2026-03-01&to=2026-03-31`
 
@@ -720,6 +779,80 @@ Authorization: Bearer ses_6kJHf6P0g7hJ6KXvR3q2M1wL9a
   }
 }
 ```
+
+## 9-1. 특정 날짜의 방 상태 조회
+
+히스토리 화면에서 특정 날짜를 눌렀을 때, 그 날짜 시점의 멤버 목록/반복 퀘스트 목록/완료 기록/상태를 한 번에 조회한다.
+
+`GET /v1/rooms/{roomId}/daily-status/{date}`
+
+### 인증
+
+- 필요
+
+### 응답 `200 OK`
+
+```json
+{
+  "data": {
+    "roomId": "room_01HQ6A7J4X2JTKD5Z6Y9M8Q2F4",
+    "date": "2026-03-23",
+    "members": [
+      {
+        "id": "mem_01HQ6A9G9D22N17H2N3QH7S1BG",
+        "roomId": "room_01HQ6A7J4X2JTKD5Z6Y9M8Q2F4",
+        "nickname": "시훈",
+        "role": "leader",
+        "joinedAt": "2026-03-20T08:30:00Z"
+      },
+      {
+        "id": "mem_01HQ6AB5G4Y6M39RX8X9F3Q4QF",
+        "roomId": "room_01HQ6A7J4X2JTKD5Z6Y9M8Q2F4",
+        "nickname": "민지",
+        "role": "member",
+        "joinedAt": "2026-03-20T09:12:00Z"
+      }
+    ],
+    "recurringQuests": [
+      {
+        "id": "quest_01HQ6B8YJ0P8R6QK2F6N1H7C4M",
+        "roomId": "room_01HQ6A7J4X2JTKD5Z6Y9M8Q2F4",
+        "title": "물 2리터 마시기",
+        "description": "하루 동안 물 2리터 이상 마시고 체크하기",
+        "isActive": true,
+        "createdByMemberId": "mem_01HQ6A9G9D22N17H2N3QH7S1BG",
+        "createdAt": "2026-03-20T08:31:00Z",
+        "updatedAt": "2026-03-20T08:31:00Z"
+      }
+    ],
+    "completions": [
+      {
+        "questId": "quest_01HQ6B8YJ0P8R6QK2F6N1H7C4M",
+        "roomId": "room_01HQ6A7J4X2JTKD5Z6Y9M8Q2F4",
+        "date": "2026-03-23",
+        "memberId": "mem_01HQ6AB5G4Y6M39RX8X9F3Q4QF",
+        "completedAt": "2026-03-23T12:10:00Z"
+      }
+    ],
+    "memberStatuses": [
+      {
+        "memberId": "mem_01HQ6A9G9D22N17H2N3QH7S1BG",
+        "date": "2026-03-23",
+        "status": "goal_met",
+        "completedQuestCount": 2,
+        "requiredQuestCount": 2,
+        "totalActiveQuestCount": 3
+      }
+    ]
+  }
+}
+```
+
+### 비고
+
+- `members`는 선택한 날짜 시점에 방에 속해 있던 멤버 목록이다
+- `recurringQuests`도 선택한 날짜 시점의 제목/설명/정렬 순서를 반환한다
+- 이후 미션 추가/수정/삭제, 멤버 추가/강퇴, 커트라인 변경이 일어나도 과거 날짜 응답은 바뀌지 않는다
 
 ## 10. 내 일일 퀘스트 완료 처리
 
@@ -822,6 +955,7 @@ Authorization: Bearer ses_6kJHf6P0g7hJ6KXvR3q2M1wL9a
 - 멤버는 퀘스트별로 매일 수행하고 날짜별 `completion`을 남긴다
 - 즉, 매일 새로운 퀘스트 레코드를 만드는 구조가 아니라 같은 퀘스트들에 대해 날짜별 수행 기록이 누적되는 구조다
 - 멤버의 그날 상태는 `under_target`, `goal_met`, `perfect` 중 하나로 계산할 수 있다
+- 과거 히스토리는 현재 구성으로 재계산하지 않고 날짜 시점의 미션/멤버/커트라인 구성을 기준으로 계산한다
 
 ## 구현 전 확인할 질문
 
@@ -830,5 +964,3 @@ Authorization: Bearer ses_6kJHf6P0g7hJ6KXvR3q2M1wL9a
 - 탈퇴하거나 삭제된 멤버의 닉네임을 다른 사람이 재사용할 수 있는가?
 - 멤버가 나중에 닉네임을 변경할 수 있어야 하는가?
 - 앞으로 리더를 여러 명 둘 가능성이 있는가?
-- 이미 완료한 멤버가 있는 상태에서도 반복 퀘스트 수정이 가능한가?
-- 반복 퀘스트를 삭제할지, 아니면 `isActive = false`로 비활성화만 할지?

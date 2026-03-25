@@ -51,6 +51,7 @@ components:
         - finalGoal
         - finalGoalDate
         - dailyGoalCutoffPercent
+        - visibility
         - timezone
         - inviteToken
         - leaderMemberId
@@ -86,6 +87,8 @@ components:
             Example: if there are 3 active recurring quests and the cutoff is 50,
             then 3 × 0.5 = 1.5 and the member must complete at least 2 quests.
           example: 50
+        visibility:
+          $ref: '#/components/schemas/RoomVisibility'
         timezone:
           type: string
           description: IANA timezone identifier used to calculate each room's daily boundary.
@@ -137,6 +140,12 @@ components:
           type: string
           format: date-time
           example: '2026-03-20T08:30:00Z'
+    RoomVisibility:
+      type: string
+      enum:
+        - public
+        - private
+      example: public
     Session:
       type: object
       required:
@@ -292,6 +301,7 @@ components:
         - leaderNickname
         - finalGoal
         - finalGoalDate
+        - visibility
         - timezone
       properties:
         roomName:
@@ -309,6 +319,8 @@ components:
           format: date
           description: Final target date for the room.
           example: '2026-06-30'
+        visibility:
+          $ref: '#/components/schemas/RoomVisibility'
         timezone:
           type: string
           description: IANA timezone identifier for the room.
@@ -451,6 +463,8 @@ components:
             The minimum required completion count is rounded from
             (active recurring quest count × dailyGoalCutoffPercent / 100).
           example: 60
+        visibility:
+          $ref: '#/components/schemas/RoomVisibility'
       minProperties: 1
     RoomData:
       type: object
@@ -508,9 +522,6 @@ components:
         description:
           type: string
           example: 하루 동안 물 2.5리터 이상 마시고 체크하기
-        isActive:
-          type: boolean
-          example: true
         sortOrder:
           type: integer
           minimum: 0
@@ -590,6 +601,7 @@ components:
       required:
         - roomId
         - date
+        - members
         - recurringQuests
         - completions
         - memberStatuses
@@ -601,6 +613,10 @@ components:
           type: string
           format: date
           example: '2026-03-20'
+        members:
+          type: array
+          items:
+            $ref: '#/components/schemas/Member'
         recurringQuests:
           type: array
           items:
@@ -660,7 +676,7 @@ paths:
         - Rooms
       operationId: listRooms
       summary: 공개 방 목록 조회
-      description: 메인 화면에서 보여줄 전체 방 목록을 최신 생성 순으로 조회한다.
+      description: 메인 화면에서 보여줄 visibility=public 방 목록을 최신 생성 순으로 조회한다.
       responses:
         '200':
           description: 방 목록 조회 성공
@@ -705,6 +721,7 @@ paths:
         - Invites
       operationId: getInviteSummary
       summary: 초대 링크 정보 조회
+      description: 프론트가 이미 같은 roomId 접근 정보를 가지고 있다면 가입 화면 대신 바로 방 대시보드로 이동할 수 있다.
       parameters:
         - name: inviteToken
           in: path
@@ -812,7 +829,7 @@ paths:
       tags:
         - Rooms
       operationId: updateRoom
-      summary: 방 이름, 최종 목표 또는 최종 목표 날짜 수정
+      summary: 방 이름, 최종 목표, 최종 목표 날짜, 커트라인, 공개 여부 수정
       security:
         - bearerAuth: []
       parameters:
@@ -867,6 +884,7 @@ paths:
       description: |
         리더가 방의 일반 멤버를 강퇴한다.
         리더 자신이나 다른 리더는 강퇴할 수 없다.
+        강퇴된 멤버의 기존 완료 기록은 유지되며 과거 히스토리에는 계속 포함된다.
       security:
         - bearerAuth: []
       parameters:
@@ -1046,6 +1064,48 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
+    delete:
+      tags:
+        - RecurringQuests
+      operationId: deleteRecurringQuest
+      summary: 반복 퀘스트 삭제
+      description: |
+        리더가 반복 퀘스트를 삭제한다.
+        삭제는 미래 시점에만 적용되며, 과거 히스토리의 퀘스트 목록과 상태는 바뀌지 않는다.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: roomId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: questId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '204':
+          description: 반복 퀘스트 삭제 성공
+        '401':
+          description: 인증 실패
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: 리더 권한 없음
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: 방 또는 퀘스트를 찾을 수 없음
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
   /v1/rooms/{roomId}/completions:
     get:
       tags:
@@ -1120,7 +1180,7 @@ paths:
         - Completions
       operationId: getRoomDailyStatus
       summary: 특정 날짜의 방 상태 조회
-      description: 방의 특정 날짜 기준 반복 퀘스트 목록과 완료 기록을 함께 조회한다.
+      description: 방의 특정 날짜 종료 시점 기준 멤버 목록, 반복 퀘스트 목록, 완료 기록, 상태를 함께 조회한다. 이후 멤버/퀘스트/커트라인이 바뀌어도 과거 히스토리는 바뀌지 않는다.
       security:
         - bearerAuth: []
       parameters:

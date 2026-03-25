@@ -30,7 +30,7 @@ export interface paths {
         };
         /**
          * 공개 방 목록 조회
-         * @description 메인 화면에서 보여줄 전체 방 목록을 최신 생성 순으로 조회한다.
+         * @description 메인 화면에서 보여줄 visibility=public 방 목록을 최신 생성 순으로 조회한다.
          */
         get: operations["listRooms"];
         put?: never;
@@ -52,7 +52,10 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** 초대 링크 정보 조회 */
+        /**
+         * 초대 링크 정보 조회
+         * @description 프론트가 이미 같은 roomId 접근 정보를 가지고 있다면 가입 화면 대신 바로 방 대시보드로 이동할 수 있다.
+         */
         get: operations["getInviteSummary"];
         put?: never;
         post?: never;
@@ -96,7 +99,7 @@ export interface paths {
         delete?: never;
         options?: never;
         head?: never;
-        /** 방 이름, 최종 목표 또는 최종 목표 날짜 수정 */
+        /** 방 이름, 최종 목표, 최종 목표 날짜, 커트라인, 공개 여부 수정 */
         patch: operations["updateRoom"];
         trace?: never;
     };
@@ -114,6 +117,7 @@ export interface paths {
          * 방 멤버 강퇴
          * @description 리더가 방의 일반 멤버를 강퇴한다.
          *     리더 자신이나 다른 리더는 강퇴할 수 없다.
+         *     강퇴된 멤버의 기존 완료 기록은 유지되며 과거 히스토리에는 계속 포함된다.
          */
         delete: operations["kickRoomMember"];
         options?: never;
@@ -149,7 +153,12 @@ export interface paths {
         get?: never;
         put?: never;
         post?: never;
-        delete?: never;
+        /**
+         * 반복 퀘스트 삭제
+         * @description 리더가 반복 퀘스트를 삭제한다.
+         *     삭제는 미래 시점에만 적용되며, 과거 히스토리의 퀘스트 목록과 상태는 바뀌지 않는다.
+         */
+        delete: operations["deleteRecurringQuest"];
         options?: never;
         head?: never;
         /** 반복 퀘스트 수정 */
@@ -182,7 +191,7 @@ export interface paths {
         };
         /**
          * 특정 날짜의 방 상태 조회
-         * @description 방의 특정 날짜 기준 반복 퀘스트 목록과 완료 기록을 함께 조회한다.
+         * @description 방의 특정 날짜 종료 시점 기준 멤버 목록, 반복 퀘스트 목록, 완료 기록, 상태를 함께 조회한다. 이후 멤버/퀘스트/커트라인이 바뀌어도 과거 히스토리는 바뀌지 않는다.
          */
         get: operations["getRoomDailyStatus"];
         put?: never;
@@ -266,6 +275,7 @@ export interface components {
              * @example 50
              */
             dailyGoalCutoffPercent: number;
+            visibility: components["schemas"]["RoomVisibility"];
             /**
              * @description IANA timezone identifier used to calculate each room's daily boundary.
              * @example Asia/Seoul
@@ -306,6 +316,11 @@ export interface components {
              */
             joinedAt: string;
         };
+        /**
+         * @example public
+         * @enum {string}
+         */
+        RoomVisibility: "public" | "private";
         Session: {
             /** @example ses_6kJHf6P0g7hJ6KXvR3q2M1wL9a */
             sessionToken: string;
@@ -412,6 +427,7 @@ export interface components {
              * @example 2026-06-30
              */
             finalGoalDate: string;
+            visibility: components["schemas"]["RoomVisibility"];
             /**
              * @description IANA timezone identifier for the room.
              * @example Asia/Seoul
@@ -484,6 +500,7 @@ export interface components {
              * @example 60
              */
             dailyGoalCutoffPercent?: number;
+            visibility?: components["schemas"]["RoomVisibility"];
         };
         RoomData: {
             room: components["schemas"]["Room"];
@@ -513,8 +530,6 @@ export interface components {
             title?: string;
             /** @example 하루 동안 물 2.5리터 이상 마시고 체크하기 */
             description?: string;
-            /** @example true */
-            isActive?: boolean;
             /** @example 1 */
             sortOrder?: number;
         };
@@ -554,6 +569,7 @@ export interface components {
              * @example 2026-03-20
              */
             date: string;
+            members: components["schemas"]["Member"][];
             recurringQuests: components["schemas"]["RecurringQuest"][];
             completions: components["schemas"]["Completion"][];
             memberStatuses: components["schemas"]["MemberDailyStatus"][];
@@ -1008,6 +1024,54 @@ export interface operations {
                 };
             };
             /** @description 방을 찾을 수 없음 */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    deleteRecurringQuest: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                roomId: string;
+                questId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 반복 퀘스트 삭제 성공 */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description 인증 실패 */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description 리더 권한 없음 */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description 방 또는 퀘스트를 찾을 수 없음 */
             404: {
                 headers: {
                     [name: string]: unknown;

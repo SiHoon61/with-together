@@ -26,6 +26,12 @@ const (
 	MemberRoleMember MemberRole = "member"
 )
 
+// Defines values for RoomVisibility.
+const (
+	Private RoomVisibility = "private"
+	Public  RoomVisibility = "public"
+)
+
 // Completion defines model for Completion.
 type Completion struct {
 	CompletedAt time.Time          `json:"completedAt"`
@@ -85,7 +91,8 @@ type CreateRoomRequest struct {
 	RoomName       string             `json:"roomName"`
 
 	// Timezone IANA timezone identifier for the room.
-	Timezone string `json:"timezone"`
+	Timezone   string         `json:"timezone"`
+	Visibility RoomVisibility `json:"visibility"`
 }
 
 // CreateRoomResponse defines model for CreateRoomResponse.
@@ -235,8 +242,9 @@ type Room struct {
 	Name           string             `json:"name"`
 
 	// Timezone IANA timezone identifier used to calculate each room's daily boundary.
-	Timezone  string    `json:"timezone"`
-	UpdatedAt time.Time `json:"updatedAt"`
+	Timezone   string         `json:"timezone"`
+	UpdatedAt  time.Time      `json:"updatedAt"`
+	Visibility RoomVisibility `json:"visibility"`
 }
 
 // RoomDailyStatusData defines model for RoomDailyStatusData.
@@ -244,6 +252,7 @@ type RoomDailyStatusData struct {
 	Completions     []Completion        `json:"completions"`
 	Date            openapi_types.Date  `json:"date"`
 	MemberStatuses  []MemberDailyStatus `json:"memberStatuses"`
+	Members         []Member            `json:"members"`
 	RecurringQuests []RecurringQuest    `json:"recurringQuests"`
 	RoomId          string              `json:"roomId"`
 }
@@ -291,6 +300,9 @@ type RoomResponse struct {
 	Data RoomData `json:"data"`
 }
 
+// RoomVisibility defines model for RoomVisibility.
+type RoomVisibility string
+
 // RotateInviteTokenData defines model for RotateInviteTokenData.
 type RotateInviteTokenData struct {
 	InviteToken string `json:"inviteToken"`
@@ -312,7 +324,6 @@ type Session struct {
 // UpdateRecurringQuestRequest defines model for UpdateRecurringQuestRequest.
 type UpdateRecurringQuestRequest struct {
 	Description *string `json:"description,omitempty"`
-	IsActive    *bool   `json:"isActive,omitempty"`
 	SortOrder   *int    `json:"sortOrder,omitempty"`
 	Title       *string `json:"title,omitempty"`
 }
@@ -326,6 +337,7 @@ type UpdateRoomRequest struct {
 	FinalGoal              *string             `json:"finalGoal,omitempty"`
 	FinalGoalDate          *openapi_types.Date `json:"finalGoalDate,omitempty"`
 	RoomName               *string             `json:"roomName,omitempty"`
+	Visibility             *RoomVisibility     `json:"visibility,omitempty"`
 }
 
 // ListCompletionsParams defines parameters for ListCompletions.
